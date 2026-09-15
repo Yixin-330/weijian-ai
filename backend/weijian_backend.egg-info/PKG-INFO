@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: weijian-backend
+Version: 0.1.0
+Summary: 未见 MVP backend
+Requires-Python: >=3.11
+Requires-Dist: arq<0.29,>=0.28
+Requires-Dist: fastapi<1,>=0.133
+Requires-Dist: httpx<1,>=0.28
+Requires-Dist: pydantic<3,>=2.13
+Requires-Dist: python-dotenv<2,>=1.1
+Requires-Dist: redis<6,>=5
+Requires-Dist: uvicorn<1,>=0.41
+Provides-Extra: test
+Requires-Dist: pytest<10,>=8.4; extra == "test"
+Provides-Extra: storage
+Requires-Dist: alembic<2,>=1.16; extra == "storage"
+Requires-Dist: pymysql<2,>=1.1; extra == "storage"
+Requires-Dist: sqlalchemy<3,>=2.0; extra == "storage"

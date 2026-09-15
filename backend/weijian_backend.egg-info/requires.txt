@@ -1,0 +1,15 @@
+arq<0.29,>=0.28
+fastapi<1,>=0.133
+httpx<1,>=0.28
+pydantic<3,>=2.13
+python-dotenv<2,>=1.1
+redis<6,>=5
+uvicorn<1,>=0.41
+
+[storage]
+alembic<2,>=1.16
+pymysql<2,>=1.1
+sqlalchemy<3,>=2.0
+
+[test]
+pytest<10,>=8.4

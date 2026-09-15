@@ -1,0 +1,125 @@
+{
+  "authored_status": "approved_with_exclusions",
+  "target_fixture_version": "v2",
+  "approved_on": "2026-09-15",
+  "excluded_event_ids": ["ai-borrowed-voice"],
+  "islands": [
+    {
+      "island_id": "stability",
+      "scene": "潮汐之上的灯塔群依靠有限的光种维持航路；每一次点亮旧航线，也意味着暂时放弃一条未知方向。",
+      "events": [
+        {
+          "event_id": "stability-light-allocation",
+          "act": 1,
+          "title": "最后一枚光种",
+          "dilemma": "把光种留给熟悉港口维持整夜照明，还是用它点亮一次通往未知岛屿的短暂航线？",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "最近一次你在稳定与可能性之间作选择时，真正不愿失去的是什么？"
+        },
+        {
+          "event_id": "stability-broken-bridge",
+          "act": 2,
+          "title": "断桥两端",
+          "dilemma": "修复可靠但漫长的旧桥，还是共同搭建一条可能失败、却能立刻通行的临时索道？",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "你判断一次冒险是否值得时，会先看成功概率，还是失败后是否仍能承担？"
+        },
+        {
+          "event_id": "stability-storm-window",
+          "act": 3,
+          "title": "风暴前的窗口",
+          "dilemma": "潮汐只留下十分钟出航窗口：现在离开可能遇到风暴，继续等待也可能彻底错过航期。",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "什么迹象会让你停止等待一个更确定的时机？"
+        }
+      ]
+    },
+    {
+      "island_id": "intimacy",
+      "scene": "双月庭院由会随距离改变形状的廊桥连接；靠近能听见彼此的回声，保留距离才能看清自己的轮廓。",
+      "events": [
+        {
+          "event_id": "intimacy-shared-map",
+          "act": 1,
+          "title": "交换地图",
+          "dilemma": "两张地图合在一起才能找到出口，但地图上也标着各自不想被进入的私人区域。",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "在亲密关系中，哪些信息的保留对你而言仍然是诚实的？"
+        },
+        {
+          "event_id": "intimacy-signal-rhythm",
+          "act": 2,
+          "title": "不同的报平安频率",
+          "dilemma": "一方需要频繁的光信号确认彼此仍在，另一方只有在重要变化发生时才愿意发出信号。",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "当对方需要的联系频率与你不同时，什么样的协商不会让你感到被控制？"
+        },
+        {
+          "event_id": "intimacy-one-shelter",
+          "act": 3,
+          "title": "只有一间避雨屋",
+          "dilemma": "风雨迫近，两者可以共享狭小住所，也可以各自寻找更远但独立的庇护。",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "你希望被陪伴的时候，会怎样让对方知道靠近到什么程度刚刚好？"
+        }
+      ]
+    },
+    {
+      "island_id": "ai_loneliness",
+      "scene": "回声湖能即时生成最贴合来访者期待的回应；湖畔仍住着会误解、会迟疑，也会带来意外的真实生命。",
+      "events": [
+        {
+          "event_id": "ai-perfect-echo",
+          "act": 1,
+          "title": "永远正确的回声",
+          "dilemma": "湖面总能给出最懂你的回答，而岸边的生命体可能误解你；今晚把话说给谁听？",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "被准确回应与被一个真实的人努力理解，对你而言有什么不同？"
+        },
+        {
+          "event_id": "ai-borrowed-voice",
+          "act": 2,
+          "title": "借来的声音",
+          "dilemma": "回声湖可以模仿一个久未联系之人的语气，但无法得到那个人此刻的真实意愿。",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "当技术能复刻熟悉感时，你会用什么确认一段陪伴仍然真实？"
+        },
+        {
+          "event_id": "ai-quiet-square",
+          "act": 3,
+          "title": "安静的广场",
+          "dilemma": "智能回声可以让广场随时热闹起来，但真正的来访者需要等待，也可能不会回应。",
+          "available_actions": ["approach", "observe", "respond", "cooperate", "avoid", "leave"],
+          "max_turns": 5,
+          "end_conditions": ["both_completed_turn", "one_left", "max_turns_reached"],
+          "material_limit": 2,
+          "return_question": "什么情况下，等待一个不确定的真人回应仍然值得？"
+        }
+      ]
+    }
+  ]
+}

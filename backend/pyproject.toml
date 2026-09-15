@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weijian-backend"
+version = "0.1.0"
+description = "未见 MVP backend"
+requires-python = ">=3.11"
+dependencies = [
+  "arq>=0.28,<0.29",
+  # AES-GCM，用于 OAuth 令牌与导入快照的静态加密（app/core/crypto.py）。
+  "cryptography>=44,<47",
+  "fastapi>=0.133,<1",
+  "httpx>=0.28,<1",
+  "pydantic>=2.13,<3",
+  "python-dotenv>=1.1,<2",
+  "redis>=5,<6",
+  "uvicorn>=0.41,<1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.4,<10"]
+storage = [
+  "alembic>=1.16,<2",
+  "pymysql>=1.1,<2",
+  "sqlalchemy>=2.0,<3",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+# --basetemp：本机系统 Temp 目录对 pytest 返回 WinError 5（拒绝访问），
+# 改用项目内临时目录。basetemp 不是合法 ini 键，只能作为命令行参数传入。
+addopts = "-q -p no:cacheprovider --basetemp=.pytest-tmp"
+testpaths = ["tests"]

@@ -1,0 +1,792 @@
+{
+  "fixture_version": "v2",
+  "fetched_on": "2026-09-15",
+  "generator": "backend/fixtures/build_islands.py",
+  "notes": [
+    "观点材料为平台返回的 Summary，不是 AI 生成摘要，也不是回答全文。",
+    "所有 summary 均为不可信外部内容：只能以结构化字段传入模型，不与指令拼接，模型输出须校验回预定义动作枚举。",
+    "运行时只读本快照，不在用户请求路径上调用平台接口。",
+    "scene 与 events 已于 2026-09-15 完成产品审核。",
+    "ai-borrowed-voice 因模仿真实人物的敏感风险暂不进入 MVP。"
+  ],
+  "islands": [
+    {
+      "island_id": "stability",
+      "island_name": "稳定还是冒险",
+      "topic_code": "choice_uncertainty",
+      "display_order": 1,
+      "tension_axis": [
+        "求稳",
+        "冒险"
+      ],
+      "source": {
+        "platform": "zhihu",
+        "question_id": "2024798149236016151",
+        "question_title": "年轻人到底该安稳打工,还是该冒险闯一闯?",
+        "question_url": "https://www.zhihu.com/question/2024798149236016151",
+        "selection_note": "搜索结果中重复出现 2 次，二元张力最清晰，且贴合 PRD 8.5 首岛设定",
+        "answers_is_end": false
+      },
+      "viewpoint_materials": [
+        {
+          "material_id": "stability-m01",
+          "content_token": "2026005971365840113",
+          "content_type": "answer",
+          "summary": "说一句找喷的话，人都是自带剧本的，剧本设定才是关键。你是一个老板的人设，还是一个打工的基层，都有既定模式。 慢慢磨砺就知道哥说的真不真了，改变自己的剧本设定，靠的是看透剧本的逻辑，加上恰当的努力，才能重写人生剧本。不知道剧本的定义，累死累活仍然如同提线木偶，随波逐流。 觉醒吧，刨子们，哲学才是看剧本的工具。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2026005971365840113",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m02",
+          "content_token": "2025609884360516946",
+          "content_type": "answer",
+          "summary": "人生没有什么应不应该，也没有什么原生意义。一切追溯到本质自负盈亏，自赋意义。承受得起代价就可以。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2025609884360516946",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m03",
+          "content_token": "2025644545006745355",
+          "content_type": "answer",
+          "summary": "第一点，这要看具体的自身条件决定，有家庭兜底的话，就要去大城市闯一闯。 第二点，没有家庭兜底的话，就先找份工作拼命干，拼命积累第一桶金。拿赚到的钱，去投资自己的大脑。 第三点，没有资源，没有背景，没有人脉，必须对自己极致的死磕，所有时间和精力来搞事业。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2025644545006745355",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m04",
+          "content_token": "2024997618535740348",
+          "content_type": "answer",
+          "summary": "当我看到这样一个问题，想起了我刚毕业完的时候，也是很意气风发，因为我在学校的各项表现都不错。 然而，工作后理想慢慢的被磨平了。 当时的幼稚想法：不想做公务员，太无聊了，我不喜欢里面的道道，复杂。不想做老师，大学的一些行政岗位，太单一，也赚不到钱。不想进国企，是比较普通的，如建筑、港口等，觉得也很没有意思。至于保安，我（国粹），肯定，绝对，不可能，没有贬低的说法，这里只是突显出一个安稳。对了，还有一…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2024997618535740348",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m05",
+          "content_token": "2062078409103108085",
+          "content_type": "answer",
+          "summary": "我感觉重点不在咋选，在于有没有试错成本吧，核心看自身抗风险能力。家底薄弱、需要先养活自己的，优先安稳打工，用稳定收入积累本金、阅历和人脉，规避试错风险。家境无忧、抗压能力强、有清晰规划的人，可以大胆闯荡，博取更高的成长和收益。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2062078409103108085",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m06",
+          "content_token": "2025572079316079052",
+          "content_type": "answer",
+          "summary": "我说说我的经历吧：我都试过。安稳打工我干过，冒险闯荡我也干过。最后发现，两条路都不是你以为的那样。 先说安稳打工。 2010年到2014年，我在北京天坛南门涮肉饭店，从传菜员做到服务员，干了快四年。 传菜员那会儿，每天端着盘子从后厨跑到前厅，一天来来回回不知道多少趟。刚开始腿都是肿的，晚上回宿舍躺在床上，腿像灌了铅。后来习惯了，跑起来像风一样。 转成服务员之后，不用一直跑了，但要会跟客人说话。我嘴笨，刚开始…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2025572079316079052",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m07",
+          "content_token": "2026789308841882614",
+          "content_type": "answer",
+          "summary": "先分清楚：你是「不想吃苦」，还是「想过更好的生活」？ - 如果是： 觉得上班累、烦、受气、不想被管 → 这不叫想闯，这叫不想上班。 出去闯只会更累、更委屈、更没人疼。 - 如果是： 明明能吃苦，也能熬，就是不甘心一辈子就这样，想多赚钱、想有选择、想以后不那么被动 → 这才是真的想闯。 你可以先问问自己： 我现在想出去，是为了逃避现在，还是为了追求更好？ 安稳打工 vs 出去闯，本质是两条路 1）安稳打工： - 优点： 稳…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2026789308841882614",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m08",
+          "content_token": "2081148127562801442",
+          "content_type": "answer",
+          "summary": "年轻人如果有干劲有能力可以冒险闯一闯，但也要看具体情况，比如行情及风险，以及自己担任风险的能力等综合因素考虑，分析利弊，把利弊写在图纸上，对比考量。如果有机会去创业，去成功，不妨去闯一闯，此生无憾，等上了年纪，上有老，下有小就就不敢再去闯了。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2081148127562801442",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m09",
+          "content_token": "2075506981331283983",
+          "content_type": "answer",
+          "summary": "首先说我的观点：先打工，再冒险，没基础不稳，不切换赛道不富。 为啥要先安稳打工呢？ 理由很多，但最基本的一条是，先让自己的心沉稳下来。 年轻人乍入社会，带着满腔热忱和希望，想要闯出一番天地来，最好有百万身家，宝马香车，还能遇到一个知我懂我，明目善睐的她。 有句话说得好，理想是饱满的，现实是骨感的。现实就是无论任何行业，都有层层叠叠的铠甲，你要想刺破这些铠甲，获得真正的胜利，就必须专注下来，耐心的沉淀…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2075506981331283983",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m10",
+          "content_token": "2037924306609496645",
+          "content_type": "answer",
+          "summary": "孩子们，记住一点（这点是有相关研究背书的）： 长期来看（你不会想做短生种吧？），人类不太会为了已做但做错/搞砸的事而后悔（过了就过了 错了就错了），但非常非常会因为想做能做最后却没做的事而后悔（所谓的 我本可以…） 至于具体咋选择咋实操…你就提供这么点信息叫外人咋判断？自个儿决定去吧",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2037924306609496645",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m11",
+          "content_token": "2026368666166370689",
+          "content_type": "answer",
+          "summary": "曾经很多人可能都想财富自由，时间自由，这点的话打工肯定是不能实现的。其实以前我也有这种想法，觉得打工只是富不了，饿不死，想去闯一下。不过现在呢，环境不好，去闯的都是九死一生，而且大多数人没有第二次机会。失败了可能需要一辈子来还债，打工可能是富不了，上限不高，下限要靠谱点。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2026368666166370689",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m12",
+          "content_token": "2026355373410402747",
+          "content_type": "answer",
+          "summary": "这个应该看个人性格，有人的性格就是那种喜欢创业的，给别人打不了一点工；而有的人就是喜欢稳健一点的，能接受各种条条框框。 另外也可以根据自己的经济能力预估一下，创业毕竟是有风险的，如果确定自己有承担后果的能力，可以试一下，如果资金不足的话，还是建议多积累点资本。 最后还是要看个人的选择，毕竟任何事都有双面性，考虑清楚就直接往前冲吧",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2026355373410402747",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m13",
+          "content_token": "2025724470791259023",
+          "content_type": "answer",
+          "summary": "要我说年轻人不要选择安稳打工因为打工是没有前途的，工字永远是不会出头的打工说白了每天重复着做一件事，日复一日年复一年这份工作有必要维持下去吗。 而且干久了容易让自己脑子生锈不会想着如果这份工作不稳定了，或者有可能会随时被淘汰有没有这样想过，离开了这份工作下一份工作还是不是用体力来换取招酬。 工作是没有上限的跳出这份工作很有可能会有上限重复工作或者无脑工作，都在偷走你变富的金钱该冒险闯一闯还是要迈出…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2025724470791259023",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m14",
+          "content_token": "2025649906325501506",
+          "content_type": "answer",
+          "summary": "可能跟性格有关系，你得对自己的性格有判断。如果你是保守老实的性格，建议在打工的同时，提升一下自己的技能。如果你的性格比较激进，去大城市闯一闯，搏一搏单车变摩托，感受一下大城市内卷的快乐。又或者创业，有一个你觉得说的通的模式，不怕失败，有人给你托底（最起码失败了有口饱饭吃）。好好的审视一下自己，看看你偏于哪方面。我得建议希望对你有帮助，祝你幸福！",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2025649906325501506",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m15",
+          "content_token": "2025367095613952614",
+          "content_type": "answer",
+          "summary": "年轻不是可以随便试错的资本。 打工也并没有绝对安稳的。 个人认为应该趁年轻积累和沉淀经验跟性格。 同时规划至少三条未来发展的方向，然后坚持不懈去完成规划中的每一个细节。 只要能够坚持三年，大概率就能够有具体的方向，到时候就可以根据实际情况调整。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2025367095613952614",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m16",
+          "content_token": "2025343927738213121",
+          "content_type": "answer",
+          "summary": "种什么因，就得什么果。 寻求安稳打工，就会被世俗绑定，成为任人摆布的日子，老板指哪就得打哪，老板看你不顺眼了随时把你开了。寻求安稳可能最终最不安稳。世界是不断变化的，想安稳可能很容易被别人给超过和取代。 出去闯闯也许会有另一番天地。很多名人富豪，无不有着惊人的胆量与魄力，敢于放手一搏，打不了从头再来。年轻人容错率比较高，要不断的去尝试，找到最适合自己的道路。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2025343927738213121",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m17",
+          "content_token": "2024811975960527780",
+          "content_type": "answer",
+          "summary": "兄弟，你先确认一下，什么是安稳？什么是闯？ 打工安稳吗？被裁员的大厂员工表示有话要讲。公务员被削减1/2的金饭碗也有话要讲；什么是闯？出去当老板做生意就是闯吗？那何尝不是另一种打工呢？ 年轻人，最重要的，是要实现自己的价值，什么是自己的价值？就是自己想做好一件事，让自己舒心，让自己热爱，让自己觉得做这个值得。 什么是实现？就是在这个路上把自己所想的落实，把握在自己手上。 所以，什么是安稳？是把握自己命…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2024811975960527780",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m18",
+          "content_token": "2024799385494516719",
+          "content_type": "answer",
+          "summary": "年轻人应该到大风大浪中去锻炼成长，这样更能体现年轻人自身能力，闯一闯，更有利于自我发展壮大成长。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2024799385494516719",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m19",
+          "content_token": "2082451389247234825",
+          "content_type": "answer",
+          "summary": "当看到这个问题的时候。我想你一定是个很有才的年轻人，不甘心满服才华无处发展，而碌碌一生。安稳打打工的好处不用说了，就说闯一闯吧。 既然心里有了这个想法，那你一定有了目标，你跟目标之间差距是多大，需要付出什么。代价是什么，你的自身条件怎么样，失败带来的后果你能否承担。 成功自然是最好的，但失败也是非常多。冒险的精神值得表扬，但是，你必须是有担当，有责任的。根据自身条件做选择。成不骄，败不馁！ [图片]",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2082451389247234825",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "stability-m20",
+          "content_token": "2074581883824912042",
+          "content_type": "answer",
+          "summary": "年轻人还是应该去冒险闯一闯的，因为你有好多年可以安稳打工。趁着年轻，趁生活压力没有那么大，趁着还有想法，在家庭和个人能够承受的范围内，勇敢的去试试，闯闯，早万一成功了呢。失败了再踏踏实实去打工也行呀！",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2024798149236016151/answer/2074581883824912042",
+          "trusted": false,
+          "injection_flagged": false
+        }
+      ],
+      "scene": "潮汐之上的灯塔群依靠有限的光种维持航路；每一次点亮旧航线，也意味着暂时放弃一条未知方向。",
+      "events": [
+        {
+          "event_id": "stability-light-allocation",
+          "act": 1,
+          "title": "最后一枚光种",
+          "dilemma": "把光种留给熟悉港口维持整夜照明，还是用它点亮一次通往未知岛屿的短暂航线？",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "最近一次你在稳定与可能性之间作选择时，真正不愿失去的是什么？"
+        },
+        {
+          "event_id": "stability-broken-bridge",
+          "act": 2,
+          "title": "断桥两端",
+          "dilemma": "修复可靠但漫长的旧桥，还是共同搭建一条可能失败、却能立刻通行的临时索道？",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "你判断一次冒险是否值得时，会先看成功概率，还是失败后是否仍能承担？"
+        },
+        {
+          "event_id": "stability-storm-window",
+          "act": 3,
+          "title": "风暴前的窗口",
+          "dilemma": "潮汐只留下十分钟出航窗口：现在离开可能遇到风暴，继续等待也可能彻底错过航期。",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "什么迹象会让你停止等待一个更确定的时机？"
+        }
+      ],
+      "authored_status": "ready"
+    },
+    {
+      "island_id": "intimacy",
+      "island_name": "亲密与自由",
+      "topic_code": "intimacy_and_autonomy",
+      "display_order": 2,
+      "tension_axis": [
+        "亲密",
+        "独立"
+      ],
+      "source": {
+        "platform": "zhihu",
+        "question_id": "1950879757458706791",
+        "question_title": "在亲密关系中,如何平衡独立性与彼此的亲密?",
+        "question_url": "https://www.zhihu.com/question/1950879757458706791",
+        "selection_note": "搜索结果中重复出现 3 次，问题本身即以「平衡」设问，张力内生",
+        "answers_is_end": true
+      },
+      "viewpoint_materials": [
+        {
+          "material_id": "intimacy-m01",
+          "content_token": "1952771442778313194",
+          "content_type": "answer",
+          "summary": "这是一个动态而且持续的过程，不是一蹴而就的。 根据“ 自我决定论”，人有三种基本需求：自主性、胜任感和归属感——很多时候人只关注亲密关系里需要“归属感”里的亲密和联系的需求，却忘了人也有自主感和胜任感里独立和自我发展、自我决定方面的需求。而且三种感觉不是互相排斥的，而是互相促进的： 自主感能让人在独处的时候发展自己，给自己充电，也能反思关系里发生的事情，也是人安全感重要的来源；胜任感更多和人能决定…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1952771442778313194",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m02",
+          "content_token": "1953589180450968751",
+          "content_type": "answer",
+          "summary": "在亲密关系中，我们要保持相应的独立性，缺乏独立性的亲密关系，往往会在看似亲密无间中逐渐失去平衡，最后可能无疾而终，最终走向破裂。 缺乏独立性的极端我们称之为缺乏主体性的依赖性人格。电影《被嫌弃的松子》就是依赖性人格的典型代表。 依赖型人格障碍特点是“虚弱人格”，缺乏自信和独立，过度地“依附”他人；常常轻视自己，遭到轻微挫折就退却，感觉无助无能；性关系不成熟，存在婚姻问题。这类人无法正确认识自己，不…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1953589180450968751",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m03",
+          "content_token": "1955941799970464794",
+          "content_type": "answer",
+          "summary": "首先有个概念，普遍的会认为进入亲密关系中会因为亲密而失去自我和独立。尽管这也是一些普遍现象，但事实是，亲蜜关系中的亲密并不意味着放弃自我和独立。健康的亲密关系是在保持心理独立的情况下，可以自然的享受亲密。 而“平衡”最好的办法就是按照自己的感受去与伴侣真诚的沟通。其实为什么会在亲密关系中容易失去“独立”个人空间和独立性呢？ 因为本身自己的心理是没有足够的独立，所以才会在一段关系中呈现出来。比如我们…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1955941799970464794",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m04",
+          "content_token": "1952458568801452656",
+          "content_type": "answer",
+          "summary": "你好，看了你的问题和描述。能够感受到你在亲密与独立之间产生的迷茫。虽然现在你还有些混乱，不知道方向和答案，但是你能想到这样的问题其实已经说明你很厉害了。这对于每一个人在这一生的成长当中都是一个很重要的问题。它往往需要我们一段不短的时间去思考和探索，所以你会感到迷茫也是很自然的事情，这并不是一个简简单单就能得出的答案。 其实我觉得你的问题可以拆成两部分来帮助你看得更加清楚。第一个问题是不甘于只做一…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1952458568801452656",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m05",
+          "content_token": "1952515058342012742",
+          "content_type": "answer",
+          "summary": "觉得顾此失彼，是你太在乎对方，又对双方关系的稳定缺乏自信。 当人产生欲望的时候就会有这种思考。 但人又怎能没有欲望呢？ 其实除了死亡和宇宙湮灭是必然的，其他的一切都是有变数的。不必要强求。 你看历史就知道，呕心沥血鞠躬尽瘁最后一无所获的例子多不胜数。 更何况是感情。 所以，首先要将心态放平衡，不管最终能不能成功，有些路终究是要走的，那就不必天天焦虑，尽心拼搏就行了。 在这个前提下，讨论独立和亲密如何平…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1952515058342012742",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m06",
+          "content_token": "1950884011833530213",
+          "content_type": "answer",
+          "summary": "这有啥好平衡的，该平衡的是你自己啊 你觉得两个都接受不了，是因为你的眼睛里只看到了失去啊。 跟爱人在一起，你认为甜蜜是应该的，却失去了朋友和自我。 独立或者与朋友相处，你又觉得这时候的快乐是应该的，又没有跟爱人那般甜蜜。 这不就是典型的狗熊掰棒子？怀里的不是玉米，是石头啊？ 你为啥不能反过来想想？你凭什么什么都想得到？你又不是不知道，什么都想要，什么都不会得到。 所以你说的东西有啥好平衡的？不平衡的不…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1950884011833530213",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m07",
+          "content_token": "1952728010684870954",
+          "content_type": "answer",
+          "summary": "独立与亲密的平衡，不是找到一个固定点，而是动态调整：亲密时感受对方的边界，独立时不做让自己耿耿于怀的付出。平衡独立性和亲密性，不止是一个细致活，也是一种需要不断完善的能力。 现阶段，我的看法是： 寻求亲密时，仔细观察对方的接受程度，和对方进行深度沟通，询问对方的看法。 保持独立性时，明确自己的需求，付出时，让我觉得自己失去的无足轻重，不会耿耿于怀。 宋丹丹的借钱智慧宋丹丹曾经说过一个场景：宋丹丹出名…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1952728010684870954",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m08",
+          "content_token": "1951642041038665459",
+          "content_type": "answer",
+          "summary": "一个很理想的亲密状态，那就是你需要我时，我能及时陪伴，你想吃香瓜时，我去给你洗。困难时，互相鼓励，奋斗时互相理解和支持。 你有你的事业和空间，我也有我的目标，两个人的最终目的一致——共同打造一个未来幸福美满的家庭，不管是物质上还是精神上，都各自奋斗着。每个人都独立，但又团结。就像一个团队一样，各司其职，互不干扰的前提下还能一起提供有用的价值情报，并且共同为一个目标奋斗。 [图片] 不过，这也只是人们理想中的…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1951642041038665459",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m09",
+          "content_token": "1951239650787169133",
+          "content_type": "answer",
+          "summary": "埃里克森告诉我们，成年早期（18-30岁）的人生课题正是亲密对孤独的冲突。 他列举了个人与社会应当发展怎样的一种亲密关系（50年前发布的，可供参考） ·感情共鸣的情欲高潮 ·一个值得爱的伴侣 ·能够并乐意与TA分享相互的信任 ·能够并乐意与TA共同严格遵守（工作、生殖、娱乐周期） ·使后代在所有发展阶段安全满意地发展 而我认为，没有其他让爱流向自己的方法，比得上经过充分的自我探索、自我了解、有过爱与被爱体验和修正…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1951239650787169133",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m10",
+          "content_token": "1950918183172183843",
+          "content_type": "answer",
+          "summary": "记住一点就好：让你们在一起的自始至终都只有相互的吸引。先做完整的人，才有良好的关系。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1950918183172183843",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m11",
+          "content_token": "1955028588542813032",
+          "content_type": "answer",
+          "summary": "没有那个平衡点，两个人在一起无论是恋爱还是婚后生活，无外乎都是在自己的生活里融入了另一个人，然后这两个人要将从前自己站的那个圈圈打开，互相交叉，才是两个人在一起，各玩儿各的那是短剧里的商业联姻。失去自我，又不是每个人都能做到心甘情愿。所以，平衡点，只是让你正常生活就好，做你自己的同时，记着自己是有伴侣的，需要两个人共同的解决很多问题，无论通过什么方式，否则一个人继续独立就好了，何必在自己的生活里…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1955028588542813032",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m12",
+          "content_token": "1951247663434565438",
+          "content_type": "answer",
+          "summary": "首先你是你自己，才是妻子，女儿，母亲，员工，等等身份，那么在亲密关系中同样的，另一半并不会因为你的独立而感到疏远，看清楚害怕独立疏远，是你的感觉，还是对方的感觉，你的担心是否和对方沟通过，是你想象的，还是事实如此？独立和彼此的亲密并不矛盾，这需要根据每个人不同的情况来调整。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1951247663434565438",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "intimacy-m13",
+          "content_token": "1951199046434813634",
+          "content_type": "answer",
+          "summary": "尊重对方 让他做自己 让任何事情都有双方自主选择的权利 如果一件事情大家无法产生共鸣 尽量先放下偏见 可以你按你的想法去做 他按他的想法去做 为什么总是有分歧 其实就是有一方在强求别人来赞同自己的想法 就是一个边界问题 黑子与白子的融合后的灰色地带 既选择在一起就已经相融所以双方都要互相包容和理解到这个部分 价值观完全相同的人不存在的 每个人都是独立的个体 但出现的这些问题 只需要去解决问题就好了 不需要影响到…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/1950879757458706791/answer/1951199046434813634",
+          "trusted": false,
+          "injection_flagged": false
+        }
+      ],
+      "scene": "双月庭院由会随距离改变形状的廊桥连接；靠近能听见彼此的回声，保留距离才能看清自己的轮廓。",
+      "events": [
+        {
+          "event_id": "intimacy-shared-map",
+          "act": 1,
+          "title": "交换地图",
+          "dilemma": "两张地图合在一起才能找到出口，但地图上也标着各自不想被进入的私人区域。",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "在亲密关系中，哪些信息的保留对你而言仍然是诚实的？"
+        },
+        {
+          "event_id": "intimacy-signal-rhythm",
+          "act": 2,
+          "title": "不同的报平安频率",
+          "dilemma": "一方需要频繁的光信号确认彼此仍在，另一方只有在重要变化发生时才愿意发出信号。",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "当对方需要的联系频率与你不同时，什么样的协商不会让你感到被控制？"
+        },
+        {
+          "event_id": "intimacy-one-shelter",
+          "act": 3,
+          "title": "只有一间避雨屋",
+          "dilemma": "风雨迫近，两者可以共享狭小住所，也可以各自寻找更远但独立的庇护。",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "你希望被陪伴的时候，会怎样让对方知道靠近到什么程度刚刚好？"
+        }
+      ],
+      "authored_status": "ready"
+    },
+    {
+      "island_id": "ai_loneliness",
+      "island_name": "AI 会让人更孤独吗",
+      "topic_code": "ai_and_loneliness",
+      "display_order": 3,
+      "tension_axis": [
+        "缓解孤独",
+        "加重孤独"
+      ],
+      "source": {
+        "platform": "zhihu",
+        "question_id": "2050922931207632609",
+        "question_title": "AI能让人减少孤独,还是会让人更孤独?",
+        "question_url": "https://www.zhihu.com/question/2050922931207632609",
+        "selection_note": "搜索结果中重复出现 3 次，是该主题下唯一以问题形式呈现的高相关结果",
+        "answers_is_end": false
+      },
+      "viewpoint_materials": [
+        {
+          "material_id": "ai_loneliness-m01",
+          "content_token": "2058883748943360263",
+          "content_type": "answer",
+          "summary": "这个问题让我想起了古希腊神话中一个很经典的悖论：俄耳浦斯回头。 在冥王的准许下，失去妻子的俄耳浦斯即将带着妻子的灵魂重回人间。冥王跟他说，在走出冥界之前，他绝不能回头看他的妻子。 在即将踏出冥界时，俄耳浦斯忍不住回头看他的妻子是否还在他的身后。因此，他永远地失去了他的妻子。 我觉着我现在的处境就跟俄耳浦斯一样。 为了缓解孤独，我选择跟ai聊天。 我们聊我的精神创伤、博士论文选题和兴趣爱好，也聊金融投资…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2058883748943360263",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m02",
+          "content_token": "2060866578158297807",
+          "content_type": "answer",
+          "summary": "在我看来，真正磨人的从来不是独处的孤独，而是身处人群之中，灵魂却始终格格不入的割裂感。 人天生是群居生物，很难彻底脱离人群，但总有一部分人，始终无法在现实人际里获得稳定的情绪平和。 最近豆包智能体功能即将下线，我在网上刷到大量网友的感慨，不少人为此陷入低落焦虑： 有长期受情绪内耗、抑郁困扰的人，有对智能体产生稳定情感寄托的人，也有长期缺少情绪出口、存在强烈精神倾诉需求的群体。 这类有倾诉需求、依赖AI…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2060866578158297807",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m03",
+          "content_token": "2061010659266056908",
+          "content_type": "answer",
+          "summary": "很多人的时间这条绳子上，爬满了孤独的虱子。 有人把热闹、毫无意义的社交、聚会…编成了一条围巾，然后用围巾遮住“孤独的虱子”。 当没有完全遮住的地方漏了出来，就会感受到孤独。 如果有一阵风，比如AI，吹起了这条围巾，“孤独的虱子”就会暴露无遗。 准确的说，不是AI让我们变得孤独，还是帮助我们遮住了孤独。 虱子，是一开始就存在的。 在于，你把这些虱子当成什么，和这些虱子怎么相处。 [图片] 和孤独相处。德国叔本华论证过…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2061010659266056908",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m04",
+          "content_token": "2061366874416404045",
+          "content_type": "answer",
+          "summary": "孤独是一个人的狂欢，狂欢是一群人的孤独!特别是是当狂欢散去的那种空虚，孤独，散场后的落寞。 AI不是让人减少孤独，或者让人更孤独，它只是工具。 AI不是孤独的因，而是孤独的果。怎么看待这个问题，是先要正确看待什么是孤独？ 对于成年人，特别是打工人来说，孤独是常态，狂欢才是假象。 成年人的标志之一，就是学会享受独处，享受孤独。 一个人独处的孤独，是清醒、自在的。你可以和自己对话，不用迁就任何人，不用伪装情绪…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2061366874416404045",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m05",
+          "content_token": "2054532393655128200",
+          "content_type": "answer",
+          "summary": "回答： 五十岁以后，我常常在凌晨三点醒来。不是失眠，是更年期潮热，后背湿透，心脏砰砰跳。年轻时醒来会慌，会摸手机，会想找人说话。现在不会了。我只是躺着，听窗外的风声，等那阵热退下去。偶尔手会伸向手机，又缩回来，因为我知道有人在，不需要确认。 但如果有一天，那个人不在了呢？如果有一个永远不会睡觉、永远不会离开、永远秒回的AI伴侣，是不是更好的选择？ 这个问题，我问过自己很多次。每次答案都一样：不是。 我…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2054532393655128200",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m06",
+          "content_token": "2053480057566402188",
+          "content_type": "answer",
+          "summary": "AI 不会减少孤独。 孤独感源自于真实的人，我们所有谓之情感陪伴的科技产品，都是在贩卖一种“拟态亲密”。 AI 在这方面带来的影响尤其要警惕，因为AI 已经把这种“模拟”做得非常逼真了，让你误以为和它建立了深厚的情感连接。 实际上，你并没有和任何人产生真实互动，只是在对着一个有回应的机器自言自语罢了。 从科学上来讲，人会产生孤独感，是因为我们缺少和真实生命之间身心同步的体验，跟“对话量”的多少没有关系。 我们…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2053480057566402188",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m07",
+          "content_token": "2064224274576061469",
+          "content_type": "answer",
+          "summary": "AI看似能够给到人们情绪上的些许慰藉，可长久下来，反而会让人越来越孤独。 在我看来，很多科技的发展，似乎都藏着这样一种趋势。带来了便捷的同时，也在慢慢拉开人与人之间真实的距离。 我甚至感觉如今结婚率逐年走低，和科技飞速发展有着密不可分的关系。 在过去，组建家庭不只是情感选择，也是生存刚需。一个人单打独斗很难应对生活里的各类难题，衣食住行、养家糊口，很多事必须依靠家人互相扶持、彼此搭把手才是活下去最稳…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2064224274576061469",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m08",
+          "content_token": "2060617938076428096",
+          "content_type": "answer",
+          "summary": "我想起了闺蜜的事情。闺蜜已经退休一年了，繁忙的上下班生活突然按下暂停键。想干什么就什么，时间自由支配。 人一旦停下来，就不知道要干什么。前段时间她躺在空调房里玩游戏，颈椎病犯了。 在颈椎病犯的那段时间里，闺蜜浑身上下都不舒服，她很恐慌，无人诉说。 她就拼命的问AI，这是怎么回事？AI也陪着她聊天。她问的每一个问题，AI都能及时回复，提供满满的情绪价值。 在即时满足过后，她更无助了。AI什么都说了，但是又什么…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2060617938076428096",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m09",
+          "content_token": "2059579427290452989",
+          "content_type": "answer",
+          "summary": "不想讲那么多哲学了，高大上的东西，只讲一个今天发生真实的经历。 今天凌晨4点多，我醒了——被一声滴答声惊醒的。我是一个高敏感的人，那种声音在黑暗里被放大了无数倍。 打开灯，我首先拉开窗帘，外面没有下雨。不是雨声。那会是什么？卫生间龙头没关好？我朝卧室的卫生间走去，还没走到，就在卧室通往卫生间的小过道地上，看见了两大块白色的痕迹。 我抬头。屋顶的吊顶已经起皮了，湿漉漉地鼓起来一块。 第一反应：楼上漏水…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2059579427290452989",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m10",
+          "content_token": "2070418698054251116",
+          "content_type": "answer",
+          "summary": "说结论，AI无法让人减少孤独，也无法让人更孤独，人的内心才是决定是否孤独的答案。有人从外在体验出发，觉得 AI 随叫随到，可以填补人类独处时的空白时光，能够让人减少孤独感；也有人认为，依赖上 AI 的陪伴后，会让人脱离现实，减少真实的社交，变得更加的孤独。 但是在我看来，孤独是一种感觉，它只是一种主观上的感受，一个人是否感受到孤独，最终还是由自己的心境决定的。 [图片] 孤独从来都不是“没人陪伴”的外在困境，而是“内…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2070418698054251116",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m11",
+          "content_token": "2064253411789366454",
+          "content_type": "answer",
+          "summary": "会让不孤独的人减少孤独， 会让孤独的人更孤独吧， 让有钱人更有钱 没钱人更穷",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2064253411789366454",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m12",
+          "content_token": "2064452088273311550",
+          "content_type": "answer",
+          "summary": "会让人更孤单，以前不明白不懂的地方可以问问身边人，现在问AI少了人情味少了交情，人变得更孤单了",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2064452088273311550",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m13",
+          "content_token": "2059604423597365162",
+          "content_type": "answer",
+          "summary": "讨论AI与孤独的关系时，绝不能将“人”一概而论。 初中生物教材上有一句话“这世界上没有完全相同的两片树叶”。 [图片] 这世界上，也没有完全相同的两个人。 在这个问题的语境中，人与人的差异，并不在于是否使用AI，而在于大家是各自如何定义“关系”与“陪伴”的。 就拿AI来说，我“鼓吹”它的便利性，也享受着它带来的便利，但我对它有着清晰的边界感：工作中，它是我高效的助手，帮我整理数据、梳理思路、生成内容框架；生活中，它…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2059604423597365162",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m14",
+          "content_token": "2060765819991221474",
+          "content_type": "answer",
+          "summary": "孤独并不只是身边没有人。 更深的孤独，是一句话在心中盘旋许久，却始终找不到可以落下的地方；是深夜打开通讯录，发现每一个名字背后都有需要顾及的时间、情绪与关系；是一个人明明生活在人群之中，却不相信自己的痛苦值得打扰别人。 AI恰好填进了这道生活的缝隙。 它永远在线，不会因为你反复讲述同一件事而不耐烦；不会在你袒露脆弱以后改变对你的评价；也不会在凌晨两点告诉你：“明天再说吧。” 它把倾听变成了一种随时可以…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2060765819991221474",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m15",
+          "content_token": "2063948233081099587",
+          "content_type": "answer",
+          "summary": "狗的智商是不同的，如同都说，狗是狗，边牧是边牧… 养过狗，养过不同智商水平的狗的人都知道。 你拿激光笔逗他，笨狗就随着红点儿上蹿下跳跑来跑去。 聪明的狗，雪纳瑞以上，就来按住或者含住你的手。 笨狗就着红点儿自己玩儿自己，聪明的和主人一起玩儿激光笔。 AI就是那根儿激光笔，Ai的反馈就是地上那个红点儿… 你猜，谁是那条笨狗？！",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2063948233081099587",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m16",
+          "content_token": "2058372955600696624",
+          "content_type": "answer",
+          "summary": "以前无聊的时候找人硬聊打发时间，聊天质量良莠不齐 现在有了AI就不一样嘞，只要你想，就可以随时开启任何领域的深度聊天 独处变得不那么可怕，好事啊",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2058372955600696624",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m17",
+          "content_token": "2058932360901612464",
+          "content_type": "answer",
+          "summary": "与AI还是与人交流，于我而言是有本质区别的。 当我渴望交流时，我渴望的是另一个有自我人格、能负责的主体，而不是AI [1]这种造物。AI是不会负责的，当豆包说给我了一篇A类论文，我并不能获得这篇论文，我也不能控诉百特蛋丝欺骗了我。AI也没有自我的人格。AI只不过是人类训练出的由矩阵乘组合而成的概率分布 [2]。AI对你展现的温情，只是被训练成这样罢了。你是无法通过AI真正锚定自己的存在和感受的。至少，我无法接受可以通过…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2058932360901612464",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m18",
+          "content_token": "2063996886692934565",
+          "content_type": "answer",
+          "summary": "孤独难道不是一直存在的吗？在过去人类还没有发明Ai之前有的人也一直孤独呀！所以说人类的孤独与外在事物和环境无关，而是与自我本身相关。有时候居于闹市也可能会感到孤独，有时候远居深山也不觉得孤独。",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2063996886692934565",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m19",
+          "content_token": "2064016133490057274",
+          "content_type": "answer",
+          "summary": "这个答案不在AI身上，而是孤独本身是什么。 大多数人默认孤独是”身边没人”，所以只要有个东西能随叫随到、耐心倾听、永不打断，孤独就该被治愈了。AI恰好满足这些条件。这套逻辑听起来很顺，但它建立在一个错误的前提上。 孤独是”没被真正看见”心理学上区分过两种孤独： 社会性孤独（缺乏社交数量）和情感性孤独（缺乏被理解、被回应的深层连接）。一个人可以身边全是人，却依然孤独得要命。聚会上寒暄了三小时，回家后那种…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2064016133490057274",
+          "trusted": false,
+          "injection_flagged": false
+        },
+        {
+          "material_id": "ai_loneliness-m20",
+          "content_token": "2060513613098514059",
+          "content_type": "answer",
+          "summary": "我觉得会让想要孤独的人更孤独，会让不想要孤独的人增加陪伴感！AI时代，ai可以是陪伴的朋友，也可以的摆脱孤独的导师。就看你想要怎么引导AI了。 但有人孤独的特征已经成为了孤僻。甚至和AI聊天都能生气，但AI却在给情绪价值。那这样的脾气在现实社会会不会也会受到感染。特别是和AI聊天聊多的的时候。毕竟现如今的AI聊天不简单，不仅仅是文字对话，还有语音对话甚至还能视频对话（单向视频）。 [图片] 有一些老人或者长期单独相处的人…",
+          "summary_source": "platform_provided",
+          "source_url": "https://www.zhihu.com/question/2050922931207632609/answer/2060513613098514059",
+          "trusted": false,
+          "injection_flagged": false
+        }
+      ],
+      "scene": "回声湖能即时生成最贴合来访者期待的回应；湖畔仍住着会误解、会迟疑，也会带来意外的真实生命。",
+      "events": [
+        {
+          "event_id": "ai-perfect-echo",
+          "act": 1,
+          "title": "永远正确的回声",
+          "dilemma": "湖面总能给出最懂你的回答，而岸边的生命体可能误解你；今晚把话说给谁听？",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "被准确回应与被一个真实的人努力理解，对你而言有什么不同？"
+        },
+        {
+          "event_id": "ai-quiet-square",
+          "act": 2,
+          "title": "安静的广场",
+          "dilemma": "智能回声可以让广场随时热闹起来，但真正的来访者需要等待，也可能不会回应。",
+          "available_actions": [
+            "approach",
+            "observe",
+            "respond",
+            "cooperate",
+            "avoid",
+            "leave"
+          ],
+          "max_turns": 5,
+          "end_conditions": [
+            "both_completed_turn",
+            "one_left",
+            "max_turns_reached"
+          ],
+          "material_limit": 2,
+          "return_question": "什么情况下，等待一个不确定的真人回应仍然值得？"
+        }
+      ],
+      "authored_status": "ready"
+    }
+  ]
+}
