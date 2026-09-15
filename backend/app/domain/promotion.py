@@ -181,22 +181,25 @@ def _statement_for(label: str, signals: tuple[ImportedSignal, ...]) -> str:
 
 def group_by_topic(
     signals: tuple[ImportedSignal, ...],
-) -> tuple[dict[str, tuple[ImportedSignal, ...]], tuple[ImportedSignal, ...]]:
+) -> tuple[dict[OnboardingTopic, tuple[ImportedSignal, ...]], tuple[ImportedSignal, ...]]:
     """按议题归类。返回 (已归类, 未能归类)。
+
+    键是 `OnboardingTopic` 而不是 topic_code 字符串：议题编码由岛屿目录
+    提供，反查会在编码与枚举取值不一致时抛 StopIteration，把配置问题变成
+    难读的运行时错误。这里始终持有枚举本身，需要编码时再正向映射。
 
     未能归类的信号不丢弃：它们仍然落成证据行，只是暂时不参与理解生成。
     """
-    grouped: dict[str, list[ImportedSignal]] = {}
+    grouped: dict[OnboardingTopic, list[ImportedSignal]] = {}
     unclassified: list[ImportedSignal] = []
     for signal in signals:
         topic = topic_for_text(signal.text)
         if topic is None:
             unclassified.append(signal)
             continue
-        topic_code = topic_code_for(TOPIC_ISLANDS[topic])
-        grouped.setdefault(topic_code, []).append(signal)
+        grouped.setdefault(topic, []).append(signal)
     return (
-        {code: tuple(items) for code, items in grouped.items()},
+        {topic: tuple(items) for topic, items in grouped.items()},
         tuple(unclassified),
     )
 
@@ -208,10 +211,10 @@ def evaluate_promotion(
     grouped, _ = group_by_topic(signals)
 
     promotions: list[TopicPromotion] = []
-    for topic_code, items in grouped.items():
-        topic = next(t for t in TOPIC_LABELS if t.value == topic_code)
+    for topic, items in grouped.items():
         label = TOPIC_LABELS[topic]
         island_id = TOPIC_ISLANDS[topic]
+        topic_code = topic_code_for(island_id)
         weight = sum(s.weight for s in items)
         kinds = {s.source for s in items}
         days = {s.occurred_on for s in items if s.occurred_on}
