@@ -71,16 +71,75 @@ type CreatedWorld = {
   memories: Array<{
     id: string;
     statement: string;
-    status: "candidate" | "confirmed" | "rejected";
+    status: "candidate" | "confirmed" | "rejected" | "superseded" | "deleted";
+    version?: number;
+    topic_code?: string;
     confidence: number;
     evidence_ids: string[];
     allow_social_recommendation: boolean;
     calibration?: "like_me" | "recent" | "opposes" | "wrong" | null;
   }>;
+  relationships?: RelationshipPayload[];
   latest_tick?: {
+    id?: string;
     selected_island_id: string;
     decision_reason: string;
+    matching_status?: "waiting" | "matched" | "paused" | "cooldown" | "failed";
+    match_reason?: string;
+    encounter_id?: string | null;
   } | null;
+  source_mode?: "precomputed" | "live";
+};
+
+type LifeformPayload = CreatedWorld["lifeform"];
+
+type EncounterTurn = {
+  id: string;
+  turn_number: number;
+  actor_lifeform_id: string;
+  action: "approach" | "observe" | "respond" | "cooperate" | "avoid" | "leave";
+  public_utterance: string;
+  reason_summary: string;
+};
+
+type EncounterPayload = {
+  id: string;
+  world_tick_id: string;
+  island_id: string;
+  fixture_version: string;
+  event_id: string;
+  title: string;
+  dilemma: string;
+  lifeform_ids: [string, string];
+  status: "completed" | "left";
+  turns: EncounterTurn[];
+  outcome_summary: string;
+  relationship_id: string;
+  shared_memory: string;
+  return_question: string;
+  source_mode: "fixture";
+  match_reason?: string;
+  companion_is_demo?: boolean;
+};
+
+type RelationshipStatus = "active" | "ended" | "blocked";
+
+type RelationshipPayload = {
+  id: string;
+  lifeform_ids: [string, string];
+  status: RelationshipStatus;
+  island_id: string;
+  headline: string;
+  shared_experiences: string[];
+  encounter_count: number;
+  source_mode: "precomputed" | "live" | "fallback";
+};
+
+type LiveEncounterResult = {
+  world: CreatedWorld;
+  encounter: EncounterPayload | null;
+  relationship: RelationshipPayload | null;
+  companion: LifeformPayload | null;
 };
 
 type OnboardingAnswers = {
@@ -117,6 +176,86 @@ const islandLabels: Record<string, string> = {
 };
 
 const apiBaseUrl = () => (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+
+async function readApiError(response: Response, fallback: string) {
+  const payload = await response.json().catch(() => null) as { detail?: string } | null;
+  return payload?.detail || `${fallback}（${response.status}）`;
+}
+
+async function bootstrapDemoWorld(): Promise<CreatedWorld> {
+  const response = await fetch(`${apiBaseUrl()}/api/v1/demo/bootstrap`, { method: "POST" });
+  if (!response.ok) throw new Error(await readApiError(response, "体验世界初始化失败"));
+  return response.json() as Promise<CreatedWorld>;
+}
+
+async function readTickEncounter(tickId: string): Promise<EncounterPayload | null> {
+  const response = await fetch(`${apiBaseUrl()}/api/v1/world/ticks/${tickId}/encounter`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(await readApiError(response, "相遇结果读取失败"));
+  return response.json() as Promise<EncounterPayload>;
+}
+
+async function advanceToEncounter(world: CreatedWorld): Promise<LiveEncounterResult> {
+  let encounter = world.latest_tick?.id ? await readTickEncounter(world.latest_tick.id) : null;
+  if (!encounter) {
+    const status = await fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/exploration`);
+    if (!status.ok) throw new Error(await readApiError(status, "探索状态读取失败"));
+    const own = await status.json() as { last_encounter_id: string | null };
+    if (own.last_encounter_id) {
+      const response = await fetch(`${apiBaseUrl()}/api/v1/encounters/${own.last_encounter_id}`);
+      if (!response.ok) throw new Error(await readApiError(response, "相遇读取失败"));
+      encounter = await response.json() as EncounterPayload;
+    }
+  }
+
+  if (!encounter) {
+    const tickResponse = await fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/next-action`, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+    if (!tickResponse.ok) throw new Error(await readApiError(tickResponse, "世界时间推进失败"));
+
+    let job = await tickResponse.json() as {
+      job_id: string;
+      status: "queued" | "in_progress" | "completed" | "failed" | "not_found";
+      tick?: { id: string } | null;
+      error?: string | null;
+    };
+    for (let attempt = 0; job.status === "queued" || job.status === "in_progress"; attempt += 1) {
+      if (attempt >= 20) throw new Error("世界时间仍在推进，请稍后再查看这次相遇。");
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+      const jobResponse = await fetch(`${apiBaseUrl()}/api/v1/world/tick-jobs/${job.job_id}`);
+      if (!jobResponse.ok) throw new Error(await readApiError(jobResponse, "世界时间状态读取失败"));
+      job = await jobResponse.json();
+    }
+    if (job.status === "failed") throw new Error(job.error || "这次世界时间推进失败。");
+    if (!job.tick?.id) throw new Error("世界时间已经推进，但没有返回可读取的结果。");
+    encounter = await readTickEncounter(job.tick.id);
+  }
+
+  if (!encounter) {
+    const response = await fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/world`);
+    if (!response.ok) throw new Error(await readApiError(response, "探索状态读取失败"));
+    return { world: await response.json() as CreatedWorld, encounter: null, relationship: null, companion: null };
+  }
+
+  const companionId = encounter.lifeform_ids.find((id) => id !== world.lifeform.id);
+  if (!companionId) throw new Error("相遇结果缺少同行生命体。");
+  const [relationshipResponse, worldResponse, companionResponse] = await Promise.all([
+    fetch(`${apiBaseUrl()}/api/v1/relationships/${encounter.relationship_id}`),
+    fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/world`),
+    fetch(`${apiBaseUrl()}/api/v1/lifeforms/${companionId}`),
+  ]);
+  if (!relationshipResponse.ok) throw new Error(await readApiError(relationshipResponse, "关系变化读取失败"));
+  if (!worldResponse.ok) throw new Error(await readApiError(worldResponse, "生命体状态刷新失败"));
+  if (!companionResponse.ok) throw new Error(await readApiError(companionResponse, "同行生命体读取失败"));
+  return {
+    encounter,
+    relationship: await relationshipResponse.json() as RelationshipPayload,
+    world: await worldResponse.json() as CreatedWorld,
+    companion: await companionResponse.json() as LifeformPayload,
+  };
+}
 
 const isStandaloneExperience = () => {
   if (import.meta.env.VITE_EXPERIENCE_MODE === "standalone") return true;
@@ -219,9 +358,11 @@ async function calibrateAndAdvance(
   world: CreatedWorld,
   calibration: CalibrationId,
   excludeSocial: boolean,
+  understandingId?: string,
 ): Promise<CalibrationResult> {
-  const candidate = world.memories.find((memory) => memory.status === "candidate")
-    || world.memories.find((memory) => memory.calibration);
+  const candidate = (understandingId ? world.memories.find((memory) => memory.id === understandingId) : undefined)
+    || world.memories.find((memory) => memory.status === "candidate")
+    || world.memories.find((memory) => memory.status === "confirmed");
   if (!candidate) throw new Error("当前没有可校准的候选理解。");
 
   if (isStandaloneExperience()) {
@@ -680,9 +821,8 @@ function MobilePrototype() {
 
         {sheet === "memory" ? (
           <div className="sheet-stack">
-            {createdWorld?.memories.map((memory) => (
-              <div className="memory-card" key={memory.id}><span>{memory.status === "candidate" ? "正在形成" : memory.status === "rejected" ? "已被你否定" : "已经确认"}</span><strong>{memory.statement}</strong><small>{Math.round(memory.confidence * 100)}% 置信度 · {memory.evidence_ids.length} 条明确来源</small></div>
-            )) || <div className="memory-card"><span>演示理解</span><strong>你在选择中重视自主决定</strong><small>进入真实创建流程后可校准</small></div>}
+            {createdWorld ? <UnderstandingManager world={createdWorld} onWorldChange={setCreatedWorld} /> : null}
+            {!createdWorld ? <div className="memory-card"><span>演示理解</span><strong>你在选择中重视自主决定</strong><small>进入真实创建流程后可校准</small></div> : null}
           </div>
         ) : null}
 
@@ -695,7 +835,20 @@ function MobilePrototype() {
               ))}
             </div>
             <KeyboardTextarea className="wj-textarea" value={responseText} onChange={(event) => setResponseText(event.target.value)} placeholder="也可以写下一段经历或你在意的原因" maxLength={240} />
-            <button type="button" className="sheet-primary" disabled={!responseChoice && !responseText.trim()} onClick={() => { keyboard.hide(); setSheet("response-saved"); }}>把回应交给露米</button>
+            <button type="button" className="sheet-primary" disabled={savingCalibration || (!responseChoice && !responseText.trim())} onClick={async () => {
+              keyboard.hide(); setSavingCalibration(true); setCalibrationError("");
+              try {
+                if (createdWorld && !isStandaloneExperience()) {
+                  const response = await fetch(`${apiBaseUrl()}/api/v1/users/${createdWorld.user.id}/evidence`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ingestion_key: `reply:${crypto.randomUUID()}`, source: "returned_question_reply", content_text: [responseChoice, responseText].filter(Boolean).join("。"), source_ref: createdWorld.latest_tick?.id ? `tick:${createdWorld.latest_tick.id}` : "island:stability", topic_code: "choice_uncertainty", self_reference: true }),
+                  });
+                  if (!response.ok) throw new Error(await readApiError(response, "回应保存失败"));
+                }
+                setSheet("response-saved");
+              } catch (error) { setCalibrationError(error instanceof Error ? error.message : "回应保存失败"); }
+              finally { setSavingCalibration(false); }
+            }}>把回应交给露米</button>
             <button type="button" className="sheet-secondary" onClick={() => setSheet(null)}>暂时不回应</button>
           </div>
         ) : null}
@@ -721,6 +874,7 @@ function MobilePrototype() {
 
         {sheet === "profile" ? (
           <div className="sheet-stack">
+            {createdWorld ? <ExplorationPanel world={createdWorld} onWorldChange={setCreatedWorld} /> : null}
             <div className="permission-row"><div><strong>用于生命体成长</strong><small>你主动授权的表达与选择</small></div><span>已开启</span></div>
             <div className="permission-row"><div><strong>用于社交探索</strong><small>每条理解都可单独关闭</small></div><span>逐条决定</span></div>
             <div className="permission-row"><div><strong>真人连接</strong><small>只有双方同意后才开放</small></div><span>双向同意</span></div>
@@ -854,6 +1008,26 @@ function mergeIslandCatalog(payload: IslandCatalogResponse): Record<IslandId, De
   return merged;
 }
 
+function appearanceThemeKey(appearance?: string) {
+  if (appearance === "晨光") return "dawn";
+  if (appearance === "流金") return "gold";
+  return "mist";
+}
+
+function lifeformPortraitSrc(appearance?: string) {
+  const theme = appearanceThemeKey(appearance);
+  if (theme === "dawn") return "/assets/wj/wj-desktop-lifeform-portrait-dawn-v1.png";
+  if (theme === "gold") return "/assets/wj/wj-desktop-lifeform-portrait-gold-v1.png";
+  return "/assets/wj/wj-desktop-lifeform-portrait-v1.png";
+}
+
+function worldArtworkSrc(appearance?: string) {
+  const theme = appearanceThemeKey(appearance);
+  if (theme === "dawn") return "/assets/wj/wj-desktop-world-dawn-v1.png";
+  if (theme === "gold") return "/assets/wj/wj-desktop-world-gold-v1.png";
+  return "/assets/wj/wj-desktop-world-immersive-v1.png";
+}
+
 const relationshipActs = [
   {
     label: "第一幕",
@@ -902,22 +1076,41 @@ function DesktopNav({ view, onNavigate, onProfile }: {
   );
 }
 
-function DesktopWorld({ island, islands, catalogLive, onIslandChange, onOpenEvent }: {
+function DesktopWorld({ island, islands, catalogLive, world, encounter, relationship, companion, companionName, onIslandChange, onOpenEvent }: {
   island: IslandId;
   islands: Record<IslandId, DesktopIsland>;
   catalogLive: boolean;
+  world: CreatedWorld | null;
+  encounter: EncounterPayload | null;
+  relationship: RelationshipPayload | null;
+  companion: LifeformPayload | null;
+  companionName: string;
   onIslandChange: (island: IslandId) => void;
   onOpenEvent: () => void;
 }) {
   const selected = islands[island];
   const [viewpointIndex, setViewpointIndex] = useState(0);
   const viewpoint = selected.viewpoints[viewpointIndex % Math.max(selected.viewpoints.length, 1)];
+  const actorName = world?.lifeform.name || "露米";
+  const currentIslandId = world?.lifeform.current_island_id;
+  const isCurrentIsland = !currentIslandId || island === currentIslandId;
+  const hasEncounterHere = encounter?.island_id === island;
+  const hasRelationshipHere = relationship?.island_id === island;
+  const hasCompanionHere = hasEncounterHere || hasRelationshipHere;
+  const statusTitle = hasCompanionHere
+    ? `${actorName}与${companionName}留下了共同经历`
+    : isCurrentIsland
+      ? `${actorName}正在探索「${selected.name}」`
+      : `你可以建议${actorName}关注「${selected.name}」`;
+  const statusCopy = isCurrentIsland
+    ? world?.lifeform.status || `${actorName}会从你的问题出发，形成自己的下一步。`
+    : `${actorName}保留有限自主性，会结合你的校准决定是否前往。`;
 
   useEffect(() => setViewpointIndex(0), [island]);
 
   return (
-    <section className="desktop-world" aria-labelledby="desktop-world-title">
-      <img className="desktop-world__art" src="/assets/wj/wj-desktop-world-immersive-v1.png" alt="漂浮在云海上的问题群岛，露米正在与阿澈相遇" draggable={false} />
+    <section className={`desktop-world desktop-world--${island} desktop-world--appearance-${appearanceThemeKey(world?.lifeform.appearance)}`} aria-labelledby="desktop-world-title">
+      <img className="desktop-world__art" src={worldArtworkSrc(world?.lifeform.appearance)} alt={`漂浮在云海上的问题群岛，${actorName}正在探索${selected.name}`} draggable={false} />
       <div className="desktop-world__shade" aria-hidden="true" />
 
       {(Object.entries(islands) as [IslandId, DesktopIsland][])
@@ -931,28 +1124,29 @@ function DesktopWorld({ island, islands, catalogLive, onIslandChange, onOpenEven
           aria-pressed={island === id}
         >
           <span>{item.name}</span>
-          <small>{id === "stability" ? "正在发生" : item.question.split("，")[0]}</small>
+          <small>{id === currentIslandId ? "正在发生" : item.question.split("，")[0]}</small>
           <ChevronRightIcon />
         </button>
       ))}
 
-      <div className="desktop-creature-label desktop-creature-label--lumi"><span>露米</span><small>从你的经历出发<br />去靠近更多可能</small></div>
-      <div className="desktop-creature-label desktop-creature-label--ache"><span>阿澈</span><small>在确定的方向里<br />守住重要的光</small></div>
+      <div className="desktop-creature-label desktop-creature-label--lumi"><span>{actorName}</span><small>{world?.lifeform.appearance || "雾蓝"} · {world?.lifeform.exploration_tendency || "安静观察"}<br />从你的问题出发继续生长</small></div>
+      {hasCompanionHere ? <div className="desktop-creature-label desktop-creature-label--ache"><span>{companionName}</span><small>{companion?.appearance || "未知形态"} · {companion?.exploration_tendency || "独立探索"}<br />在共同经历中保留自己的答案</small></div> : null}
 
       <article className="desktop-world__story" aria-live="polite">
-        <p className="desktop-kicker">{selected.eyebrow}</p>
+        <p className="desktop-kicker">{isCurrentIsland ? "当前岛屿" : selected.eyebrow}</p>
         <h1 id="desktop-world-title">{selected.name}</h1>
         <p className="desktop-world__question">{selected.question}</p>
         <a className="desktop-world__source" href={selected.questionUrl} target="_blank" rel="noreferrer">知乎真实问题 · 查看原题</a>
         <button type="button" className="desktop-primary" onClick={onOpenEvent}>
-          {island === "stability" ? "看看发生了什么" : "让露米去看看"}<ArrowRightIcon />
+          {isCurrentIsland ? "看看这里发生了什么" : `建议${actorName}去看看`}<ArrowRightIcon />
         </button>
       </article>
 
       <aside className="desktop-world__status">
-        <span>{island === "stability" ? "正在同行" : "新的方向"}</span>
-        <strong>{island === "stability" ? "露米正在与阿澈交流" : `露米正在注视「${selected.name}」`}</strong>
-        <p>{selected.note}</p>
+        <span>{hasCompanionHere ? "最近相遇" : world?.latest_tick?.matching_status === "waiting" ? "等待同行" : isCurrentIsland ? "当前探索" : "新的方向"}</span>
+        <strong>{statusTitle}</strong>
+        <p>{statusCopy}</p>
+        {world?.latest_tick?.match_reason ? <small>{world.latest_tick.match_reason}</small> : null}
         {viewpoint ? (
           <div className="desktop-world__echo">
             <span>岛上回声 · {viewpointIndex + 1}/{selected.viewpointCount}</span>
@@ -972,34 +1166,269 @@ function DesktopWorld({ island, islands, catalogLive, onIslandChange, onOpenEven
   );
 }
 
-function DesktopEventDialog({ open, onClose, onRelationship }: {
+const relationshipStatusLabels: Record<RelationshipStatus, string> = {
+  active: "可以继续观察",
+  ended: "探索已经结束",
+  blocked: "不再相遇",
+};
+
+function DesktopEventDialog({ open, loading, error, encounter, actorLifeformId, actorName, companionName, islandName, allowDemoFallback, waitingMessage, onClose, onRelationship }: {
   open: boolean;
+  loading: boolean;
+  error: string;
+  encounter: EncounterPayload | null;
+  actorLifeformId?: string;
+  actorName: string;
+  companionName: string;
+  islandName: string;
+  allowDemoFallback: boolean;
+  waitingMessage?: string;
   onClose: () => void;
   onRelationship: () => void;
 }) {
   if (!open) return null;
 
+  const turns = encounter?.turns || [];
+  const hasLiveEncounter = Boolean(encounter);
+  const showDemoFallback = !encounter && allowDemoFallback;
+
   return (
     <div className="desktop-dialog-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="desktop-event-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-event-title">
         <button type="button" className="desktop-dialog-close" onClick={onClose} aria-label="关闭"><CrossCircledIcon /></button>
-        <p className="desktop-kicker">共同事件 · 第一幕</p>
-        <h2 id="desktop-event-title">如果更接近理想，值得暂时失去稳定吗？</h2>
-        <p className="desktop-event-dialog__intro">这不是一道测验。两个生命体会带着各自被允许使用的理解，交换一次真实选择。</p>
-        <div className="desktop-event-dialog__turns">
-          <article><span>露米先问</span><p>“失去的稳定，是否换来了真正的选择权？”</p><small>依据：你最近校准过的「重视自主决定」</small></article>
-          <article><span>阿澈回应</span><p>“我更在意，承担风险后还有没有照顾重要之人的余地。”</p><small>它没有否定露米，而是补上了另一种代价</small></article>
-        </div>
-        <div className="desktop-event-dialog__result"><EyeOpenIcon /><div><span>注意正在形成</span><p>它们答案不同，却都希望决定不会被他人代替。</p></div></div>
-        <button type="button" className="desktop-primary" onClick={onRelationship}>进入关系幕布<ArrowRightIcon /></button>
+        <p className="desktop-kicker">{hasLiveEncounter ? `${encounter!.companion_is_demo ? "演示伙伴" : "用户生命体相遇"} · 预设事件回放` : "共同事件"}</p>
+        <h2 id="desktop-event-title">{loading ? "生命体正在相遇……" : encounter?.title || (showDemoFallback ? "如果更接近理想，值得暂时失去稳定吗？" : `${actorName}还没有带回相遇记录`)}</h2>
+        <p className="desktop-event-dialog__intro">{encounter?.dilemma || (showDemoFallback ? "这不是一道测验。两个生命体会带着各自被允许使用的理解，交换一次真实选择。" : `${actorName}当前位于「${islandName}」。只有实际发生的相遇才会出现在这里。`)}</p>
+        {loading ? <div className="desktop-event-dialog__notice" role="status">正在推进世界时间，并等待两个生命体带回结果。</div> : null}
+        {error ? <div className="desktop-event-dialog__notice desktop-event-dialog__notice--error" role="alert">{error}</div> : null}
+        {!loading && !encounter && waitingMessage ? <div className="desktop-event-dialog__notice" role="status">{waitingMessage}</div> : null}
+        {encounter?.match_reason ? <div className="desktop-event-dialog__notice"><strong>为什么相遇</strong><p>{encounter.match_reason}</p></div> : null}
+        {!loading && (turns.length > 0 || showDemoFallback) ? (
+          <div className="desktop-event-dialog__turns">
+            {turns.length ? turns.map((turn) => {
+              const isActor = turn.actor_lifeform_id === actorLifeformId;
+              return (
+                <article key={turn.id}>
+                  <span>{isActor ? actorName : companionName} · 第 {turn.turn_number} 步</span>
+                  <p>“{turn.public_utterance}”</p>
+                  <small>{turn.reason_summary}</small>
+                </article>
+              );
+            }) : showDemoFallback ? (
+              <>
+                <article><span>露米先问</span><p>“失去的稳定，是否换来了真正的选择权？”</p><small>依据：你最近校准过的「重视自主决定」</small></article>
+                <article><span>阿澈回应</span><p>“我更在意，承担风险后还有没有照顾重要之人的余地。”</p><small>它没有否定露米，而是补上了另一种代价</small></article>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+        {!loading && (encounter || showDemoFallback) ? <div className="desktop-event-dialog__result"><EyeOpenIcon /><div><span>{encounter ? "相遇已经完成" : "一次相遇正在形成"}</span><p>{encounter?.shared_memory || "它们答案不同，却都希望决定不会被他人代替。"}</p></div></div> : null}
+        {encounter?.return_question ? <div className="desktop-event-dialog__return"><span>它带回的问题</span><strong>{encounter.return_question}</strong></div> : null}
+        {encounter || showDemoFallback ? <button type="button" className="desktop-primary" disabled={loading} onClick={onRelationship}>进入关系幕布<ArrowRightIcon /></button> : <button type="button" className="desktop-secondary" onClick={onClose}>回到世界</button>}
       </section>
     </div>
   );
 }
 
-function DesktopLifeform({ onRelationship, world, onWorldChange }: {
+type ExplorationPayload = {
+  state: { enabled: boolean; allow_cross_island: boolean; allow_demo_partners: boolean;
+    is_demo: boolean; social_pace: "observe_first" | "shared_experiences" | "open_to_connection";
+    excluded_topics: TopicId[]; available_at: string };
+  status: "waiting" | "paused" | "cooldown";
+  last_match_reason: string;
+  last_encounter_id: string | null;
+  last_encounter_is_demo: boolean;
+  authorized_topics: string[];
+};
+
+function ExplorationPanel({ world, onWorldChange }: { world: CreatedWorld; onWorldChange: (world: CreatedWorld) => void }) {
+  const [settings, setSettings] = useState<ExplorationPayload | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const standalone = isStandaloneExperience();
+  const read = async () => {
+    const response = await fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/exploration`);
+    if (!response.ok) throw new Error(await readApiError(response, "探索状态读取失败"));
+    const payload = await response.json() as ExplorationPayload;
+    setSettings(payload); return payload;
+  };
+  useEffect(() => {
+    if (standalone) return;
+    let active = true;
+    fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/exploration`)
+      .then(async (response) => { if (!response.ok) throw new Error(await readApiError(response, "探索状态读取失败")); return response.json() as Promise<ExplorationPayload>; })
+      .then((payload) => { if (active) setSettings(payload); })
+      .catch((error) => { if (active) setNote(String(error)); });
+    return () => { active = false; };
+  }, [world.user.id, world.latest_tick?.id, standalone]);
+  const run = async (task: () => Promise<void>) => {
+    setBusy(true); setNote("");
+    try { await task(); } catch (error) { setNote(error instanceof Error ? error.message : "暂时无法更新探索"); }
+    finally { setBusy(false); }
+  };
+  const save = async (changes: Partial<ExplorationPayload["state"]>) => {
+    if (!settings) return;
+    const merged = { ...settings.state, ...changes };
+    const previous = settings;
+    setSettings({ ...settings, state: merged });
+    try {
+      const response = await fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/exploration`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: merged.enabled, allow_cross_island: merged.allow_cross_island,
+          allow_demo_partners: merged.allow_demo_partners, social_pace: merged.social_pace,
+          excluded_topics: merged.excluded_topics }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, "探索设置保存失败"));
+      setSettings(await response.json() as ExplorationPayload); setNote("探索边界已经保存，下次相遇立即生效。");
+    } catch (error) { setSettings(previous); throw error; }
+  };
+  return <section className="understanding-manager" aria-label="相遇探索设置"><h3>它如何遇见同行者</h3>
+    <p role="status">{busy ? "正在探索…" : settings ? ({ waiting: "正在探索，等待合适的同行者", paused: "相遇已暂停，仍可私人探索", cooldown: "刚完成相遇，稍后继续探索" })[settings.status] : standalone ? "当前是独立演示场景" : "正在读取探索状态…"}</p>
+    {settings ? <>
+      <label className="desktop-check"><input type="checkbox" checked={settings.state.enabled} disabled={busy} onChange={(e) => run(() => save({ enabled: e.target.checked }))} />允许生命体参与相遇</label>
+      <label className="desktop-check"><input type="checkbox" checked={settings.state.allow_cross_island} disabled={busy} onChange={(e) => run(() => save({ allow_cross_island: e.target.checked }))} />允许为相关问题跨岛探索</label>
+      <label className="desktop-check"><input type="checkbox" checked={settings.state.allow_demo_partners} disabled={busy} onChange={(e) => run(() => save({ allow_demo_partners: e.target.checked }))} />也可以遇见明确标记的演示伙伴</label>
+      <fieldset className="understanding-actions"><legend>相遇节奏</legend>{(["observe_first", "shared_experiences", "open_to_connection"] as const).map((pace) => <button type="button" key={pace} aria-pressed={settings.state.social_pace === pace} disabled={busy} onClick={() => run(() => save({ social_pace: pace }))}>{{ observe_first: "先独自观察", shared_experiences: "先有共同经历", open_to_connection: "愿意认识同行者" }[pace]}</button>)}</fieldset>
+      <fieldset className="understanding-actions"><legend>暂时不想在这些议题中相遇</legend>{topicOptions.map((topic) => <label key={topic.id}><input type="checkbox" checked={settings.state.excluded_topics.includes(topic.id)} disabled={busy} onChange={(e) => run(() => save({ excluded_topics: e.target.checked ? [...settings.state.excluded_topics, topic.id] : settings.state.excluded_topics.filter((t) => t !== topic.id) }))} />{topic.label}</label>)}</fieldset>
+      {!settings.authorized_topics.length ? <p>还没有可用于社交的议题。可在下方理解管理中开启总体授权，并逐条决定是否使用。</p> : null}
+      {settings.last_match_reason ? <p>{settings.last_encounter_is_demo ? "演示相遇 · " : "最近的相遇缘由 · "}{settings.last_match_reason}</p> : null}
+    </> : null}
+    <button type="button" disabled={busy || standalone || !settings} onClick={() => run(async () => {
+      const response = await fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/next-action`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } });
+      if (!response.ok) throw new Error(await readApiError(response, "探索触发失败"));
+      let job = await response.json() as { status: string; job_id: string; error?: string };
+      for (let attempt = 0; ["queued", "in_progress"].includes(job.status); attempt++) {
+        if (attempt >= 20) throw new Error("探索仍在进行，稍后刷新查看。");
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const result = await fetch(`${apiBaseUrl()}/api/v1/world/tick-jobs/${job.job_id}`);
+        if (!result.ok) throw new Error("探索状态读取失败"); job = await result.json();
+      }
+      if (job.status !== "completed") throw new Error(job.error || "探索暂未完成");
+      const responseWorld = await fetch(`${apiBaseUrl()}/api/v1/users/${world.user.id}/world`);
+      if (!responseWorld.ok) throw new Error("世界状态读取失败");
+      const next = await responseWorld.json() as CreatedWorld;
+      onWorldChange(next); await read(); setNote(next.latest_tick?.match_reason || "本次探索已经完成。");
+    })}>让生命体探索一次</button>
+    <button type="button" disabled={busy || standalone} onClick={() => run(async () => { await read(); setNote("已经刷新探索状态，可回到世界查看最近相遇。"); })}>刷新相遇状态</button>
+    {note ? <p role="status">{note}</p> : null}
+  </section>;
+}
+
+function EncounterDecisions({ userId, encounter }: { userId: string; encounter: EncounterPayload }) {
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  return <section className="understanding-manager" aria-label="本次相遇的私密决定"><h3>你想让这段探索如何继续？</h3>
+    <p>这是你的私密选择。真人聊天仍需双方分别同意。</p>
+    <div className="understanding-actions">{(["observe_again", "invite", "distance", "end", "block"] as const).map((decision) => <button type="button" key={decision} disabled={busy} onClick={async () => {
+      setBusy(true); setNote("");
+      try {
+        const response = await fetch(`${apiBaseUrl()}/api/v1/encounters/${encounter.id}/decisions`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ user_id: userId, decision }) });
+        if (!response.ok) throw new Error(await readApiError(response, "选择保存失败"));
+        setNote(({ observe_again: "已记下继续观察的意愿，后续仍遵守双方意愿与相遇间隔。", invite: "已记录邀请意愿，尚未开启真人聊天。", distance: "已暂停这对生命体的相遇48小时。", end: "已结束这段探索，不会再自动配对。", block: "已屏蔽，不会再安排相遇。" })[decision]);
+      } catch (error) { setNote(error instanceof Error ? error.message : "选择保存失败"); } finally { setBusy(false); }
+    }}>{{ observe_again: "想再看看", invite: "邀请认识", distance: "保持距离", end: "结束探索", block: "屏蔽" }[decision]}</button>)}</div>
+    {note ? <p role="status">{note}</p> : null}
+  </section>;
+}
+
+function UnderstandingManager({ world, onWorldChange, returnedQuestion }: {
+  world: CreatedWorld; onWorldChange: (world: CreatedWorld) => void; returnedQuestion?: string;
+}) {
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [details, setDetails] = useState<Record<string, string>>({});
+  const [replying, setReplying] = useState(false);
+  const standalone = isStandaloneExperience();
+  const sourceLabels: Record<string, string> = { authored_content: "本人创作摘要", favlist_naming: "收藏夹名称与描述", favorite_item: "收藏条目", followee_headline: "关注对象介绍", in_app_input: "你主动写下的想法", calibration: "你的理解校准", returned_question_reply: "你对带回问题的回应", in_app_browse: "应用内阅读" };
+  const active = world.memories.filter((m) => m.status === "candidate" || m.status === "confirmed");
+  const request = async (path: string, body?: unknown) => {
+    const response = await fetch(`${apiBaseUrl()}/api/v1${path}`, body === undefined ? undefined : {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, "暂时无法保存"));
+    return response.json();
+  };
+  const run = async (task: () => Promise<void>) => {
+    setBusy(true); setMessage("");
+    try { await task(); } catch (error) { setMessage(error instanceof Error ? error.message : "暂时无法保存"); }
+    finally { setBusy(false); }
+  };
+  const refresh = async () => {
+    const next = await request(`/users/${world.user.id}/world`) as CreatedWorld;
+    onWorldChange(next);
+    return next;
+  };
+  const change = (memory: CreatedWorld["memories"][number], operation: "edit" | "delete" | "permission") => run(async () => {
+    if (standalone) { setMessage("完整理解管理需要连接后端，请在本地真实体验模式中使用。"); return; }
+    await request(`/understandings/${memory.id}/changes`, {
+      user_id: world.user.id, operation, expected_version: memory.version || 1,
+      statement: operation === "edit" ? editText : undefined,
+      allow_social_recommendation: operation === "permission" ? !memory.allow_social_recommendation : memory.allow_social_recommendation,
+    });
+    setEditing(null); await refresh();
+    setMessage(operation === "delete" ? "已删除这条理解，之后的行动不再使用它。" : "已保存，下一次探索将使用更新后的理解。");
+  });
+  return <section className="understanding-manager" aria-label="管理生命体的理解">
+    <h3>继续让它了解你</h3>
+    {returnedQuestion ? <div><blockquote>{returnedQuestion}</blockquote><label><input type="checkbox" checked={replying} onChange={(event) => setReplying(event.target.checked)} />回应这个带回问题</label></div> : null}
+    <KeyboardTextarea className="wj-textarea" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={1000} placeholder="写下最近在思考的问题，或回应生命体带回的问题…" />
+    <button type="button" disabled={busy || !draft.trim() || standalone} onClick={() => run(async () => {
+      await request(`/users/${world.user.id}/evidence`, { ingestion_key: `input:${crypto.randomUUID()}`, source: replying ? "returned_question_reply" : "in_app_input", content_text: draft, source_ref: replying && world.latest_tick?.id ? `tick:${world.latest_tick.id}` : undefined, self_reference: true });
+      const result = await request(`/users/${world.user.id}/understandings/derive`, {});
+      await refresh(); setDraft(""); setMessage(result.items.length ? "已经形成新的候选理解，可以查看依据并校准。" : "想法已经留下，目前证据还不足以形成新的理解。");
+    })}>留下想法</button>
+    <h3>我的理解 · {active.length} 条</h3>
+    {active.length === 0 ? <p>目前没有有效理解，你可以从一个最近的问题开始。</p> : null}
+    {active.map((memory) => <article className="memory-card" key={memory.id}>
+      <span>{memory.status === "candidate" ? "待你校准" : "已经确认"} · 第 {memory.version || 1} 版</span>
+      <strong>{memory.statement}</strong>
+      <small>{Math.round(memory.confidence * 100)}% 置信度 · {memory.evidence_ids.length} 条来源</small>
+      <div className="understanding-actions" role="group" aria-label="校准这条理解">
+        {(Object.entries(calibrationLabels) as [CalibrationId, string][]).map(([id, label]) => <button type="button" key={id} disabled={busy || standalone} onClick={() => run(async () => {
+          const result = await calibrateAndAdvance(world, id, !memory.allow_social_recommendation, memory.id);
+          onWorldChange(result.world); setMessage(result.decisionReason);
+        })}>{label}</button>)}
+      </div>
+      <div className="understanding-actions">
+        <button type="button" disabled={busy || standalone} onClick={() => run(async () => {
+          const records = await Promise.all(memory.evidence_ids.map((id) => request(`/users/${world.user.id}/evidence/${id}`)));
+          const history = await request(`/understandings/${memory.id}/history?user_id=${world.user.id}`);
+          setDetails((old) => ({ ...old, [memory.id]: records.map((e) => `${sourceLabels[e.source] || "授权材料"}：${e.content_text}`).join("\n") + `\n已记录 ${history.items.length} 次修正` + history.items.map((r: { decision: string; occurred_at: string }) => `\n${new Date(r.occurred_at).toLocaleString()} · ${({ like_me: "很像我", recent: "只是最近", opposes: "我在反对", wrong: "理解错了", edit: "修改理解", delete: "删除理解", permission: "修改社交授权" } as Record<string, string>)[r.decision] || "用户修正"}`).join("") }));
+        })}>形成依据与修正记录</button>
+        <button type="button" disabled={busy || standalone} onClick={() => { setEditing(memory.id); setEditText(memory.statement); }}>修改</button>
+        <button type="button" disabled={busy || standalone} onClick={() => change(memory, "permission")}>{memory.allow_social_recommendation ? "停止用于社交" : "允许用于社交"}</button>
+        <button type="button" disabled={busy || standalone} onClick={() => change(memory, "delete")}>删除理解</button>
+      </div>
+      {details[memory.id] ? <p className="understanding-detail">{details[memory.id]}</p> : null}
+      {editing === memory.id ? <div><KeyboardTextarea className="wj-textarea" value={editText} onChange={(event) => setEditText(event.target.value)} maxLength={1000} />
+        <button type="button" disabled={busy || !editText.trim()} onClick={() => change(memory, "edit")}>保存修正</button>
+        <button type="button" onClick={() => setEditing(null)}>取消</button></div> : null}
+    </article>)}
+    <button type="button" disabled={busy || standalone} onClick={() => run(async () => {
+      await request(`/users/${world.user.id}/memory-consent`, { memory_inference: false, social_recommendation: false });
+      setMessage("已暂停理解用于探索与社交，下一次行动将立即遵守。");
+    })}>暂停使用我的理解</button>
+    <button type="button" disabled={busy || standalone} onClick={() => run(async () => {
+      await request(`/users/${world.user.id}/memory-consent`, { memory_inference: true, social_recommendation: false });
+      setMessage("已恢复用于私人探索；社交使用仍需单独授权。");
+    })}>恢复私人探索</button>
+    <button type="button" disabled={busy || standalone} onClick={() => run(async () => {
+      await request(`/users/${world.user.id}/memory-consent`, { memory_inference: true, social_recommendation: true });
+      setMessage("已允许社交探索，仅使用你逐条授权且不敏感的理解。");
+    })}>允许已授权理解参与社交</button>
+    {message ? <p role="status">{message}</p> : null}
+  </section>;
+}
+
+function DesktopLifeform({ onRelationship, world, relationship, companionName, onWorldChange, returnedQuestion }: {
   onRelationship: () => void;
   world: CreatedWorld | null;
+  relationship: RelationshipPayload | null;
+  companionName: string;
+  returnedQuestion?: string;
   onWorldChange: (world: CreatedWorld) => void;
 }) {
   const [calibration, setCalibration] = useState<CalibrationId | null>(null);
@@ -1013,11 +1442,17 @@ function DesktopLifeform({ onRelationship, world, onWorldChange }: {
   const [temper, setTemper] = useState("安静观察");
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const candidate = world?.memories.find((memory) => memory.status === "candidate")
-    || world?.memories.find((memory) => memory.calibration);
+    || world?.memories.find((memory) => memory.status === "confirmed");
 
   useEffect(() => {
     if (candidate) setExcluded(!candidate.allow_social_recommendation);
   }, [candidate?.id]);
+
+  useEffect(() => {
+    if (!world) return;
+    setAppearance(world.lifeform.appearance);
+    setTemper(world.lifeform.exploration_tendency);
+  }, [world?.lifeform.id, world?.lifeform.appearance, world?.lifeform.exploration_tendency]);
 
   const save = async () => {
     if (!calibration) return;
@@ -1042,14 +1477,14 @@ function DesktopLifeform({ onRelationship, world, onWorldChange }: {
   return (
     <section className="desktop-lifeform" aria-labelledby="desktop-lifeform-title">
       <div className="desktop-lifeform__portrait">
-        <img src="/assets/wj/wj-desktop-lifeform-portrait-v1.png" alt={`${world?.lifeform.name || "露米"}的完整生命体形态`} draggable={false} />
+        <img className="desktop-lifeform__portrait-image" src={lifeformPortraitSrc(appearance)} alt={`${world?.lifeform.name || "露米"}的完整生命体形态`} draggable={false} />
         <div className="desktop-lifeform__identity"><span>共生伙伴</span><h1 id="desktop-lifeform-title">{world?.lifeform.name || "露米"}</h1><p>从你的经历出发，去靠近更多可能。</p></div>
         <button type="button" className="desktop-ghost" aria-expanded={appearanceOpen} onClick={() => setAppearanceOpen((open) => !open)}><Pencil2Icon />调整形态与探索倾向</button>
         {appearanceOpen ? (
           <section className="desktop-appearance-panel" aria-label="生命体形态设置">
             <p>由系统生成基础形态，你来决定它如何表达自己。</p>
-            <div><span>光色</span>{["雾蓝", "晨光", "静夜"].map((item) => <button type="button" aria-pressed={appearance === item} className={appearance === item ? "is-selected" : ""} key={item} onClick={() => setAppearance(item)}>{item}</button>)}</div>
-            <div><span>探索倾向</span>{["安静观察", "主动靠近"].map((item) => <button type="button" aria-pressed={temper === item} className={temper === item ? "is-selected" : ""} key={item} onClick={() => setTemper(item)}>{item}</button>)}</div>
+            <div><span>光色</span>{["雾蓝", "晨光", "流金"].map((item) => <button type="button" aria-pressed={appearance === item} className={appearance === item ? "is-selected" : ""} key={item} onClick={() => setAppearance(item)}>{item}</button>)}</div>
+            <div><span>探索倾向</span>{["安静观察", "温和追问", "主动尝试"].map((item) => <button type="button" aria-pressed={temper === item} className={temper === item ? "is-selected" : ""} key={item} onClick={() => setTemper(item)}>{item}</button>)}</div>
             <small>当前：{appearance}光色 · {temper}</small>
           </section>
         ) : null}
@@ -1067,7 +1502,7 @@ function DesktopLifeform({ onRelationship, world, onWorldChange }: {
           </div>
         ) : null}
         <fieldset className="desktop-calibration">
-          <legend>露米理解得对吗？</legend>
+          <legend>{world?.lifeform.name || "生命体"}理解得对吗？</legend>
           {(Object.entries(calibrationLabels) as [CalibrationId, string][]).map(([id, label]) => (
             <button type="button" key={id} className={calibration === id ? "is-selected" : ""} onClick={() => { setCalibration(id); setSaved(false); }}>
               {id === "like-me" ? <CheckCircledIcon /> : id === "wrong" ? <CrossCircledIcon /> : <EyeOpenIcon />}{label}
@@ -1077,46 +1512,86 @@ function DesktopLifeform({ onRelationship, world, onWorldChange }: {
         <label className="desktop-check"><input type="checkbox" checked={excluded} onChange={(event) => { setExcluded(event.target.checked); setSaved(false); }} /><span>不要把这条理解用于社交推荐</span></label>
         <button type="button" className="desktop-primary desktop-lifeform__save" disabled={!calibration || saving} onClick={save}>{saving ? "正在计算下一步…" : saved ? "校准已经保存" : "保存并看看下一步"}<ArrowRightIcon /></button>
         {saveError ? <div className="onboarding-error" role="alert">{saveError}</div> : null}
-        {saved ? <div className="desktop-save-note" role="status">{excluded ? "这条理解不会进入之后的关系推荐。" : "露米会把你的校准作为新证据，而不是固定标签。"}</div> : null}
+        {saved ? <div className="desktop-save-note" role="status">{excluded ? "这条理解不会进入之后的关系推荐。" : `${world?.lifeform.name || "生命体"}会把你的校准作为新证据，而不是固定标签。`}</div> : null}
         {decisionReason ? <div className="desktop-save-note" role="status"><strong>下一步已经改变：</strong>{decisionReason}</div> : null}
-        <div className="desktop-recent-relationship"><span>最近的关系</span><strong>与阿澈 · 注意正在形成</strong><button type="button" onClick={onRelationship}>查看经历<ChevronRightIcon /></button></div>
+        {world ? <ExplorationPanel world={world} onWorldChange={onWorldChange} /> : null}
+        {world ? <UnderstandingManager world={world} onWorldChange={onWorldChange} returnedQuestion={returnedQuestion} /> : null}
+        <div className="desktop-recent-relationship"><span>最近的相处记录</span><strong>{relationship ? `与${companionName} · ${relationshipStatusLabels[relationship.status]}` : "尚未形成共同经历"}</strong><button type="button" disabled={!relationship} onClick={onRelationship}>{relationship ? "查看经历" : "等待相遇"}<ChevronRightIcon /></button></div>
       </div>
     </section>
   );
 }
 
-function DesktopRelationship({ act, onActChange, onInvitation }: {
+function DesktopRelationship({ act, encounter, relationship, actorLifeformId, actorName, actorAppearance, companionName, currentIslandId, allowDemoFallback, userId, onActChange, onInvitation, onBackToWorld }: {
   act: number;
+  encounter: EncounterPayload | null;
+  relationship: RelationshipPayload | null;
+  actorLifeformId?: string;
+  userId?: string;
+  actorName: string;
+  actorAppearance?: string;
+  companionName: string;
+  currentIslandId: string;
+  allowDemoFallback: boolean;
   onActChange: (act: number) => void;
   onInvitation: () => void;
+  onBackToWorld: () => void;
 }) {
-  const current = relationshipActs[act];
+  if (!encounter && !allowDemoFallback) {
+    const relationshipIsland = relationship?.island_id || currentIslandId;
+    return (
+      <section className="desktop-relationship" aria-labelledby="desktop-relationship-title">
+        <img className="desktop-world__art" src={worldArtworkSrc(actorAppearance)} alt={`${actorName}尚未形成共同经历`} draggable={false} />
+        <div className="desktop-relationship__veil" aria-hidden="true" />
+        <header className="desktop-relationship__header"><p className="desktop-kicker">关系幕布 · {islandLabels[relationshipIsland] || "等待相遇"}</p><h1 id="desktop-relationship-title">{relationship?.headline || `${actorName}还没有形成关系记录`}</h1><span>这里只展示真实发生并由后端保存的共同经历</span></header>
+        <article className="desktop-act-card">
+          <div className="desktop-act-card__copy"><span>{relationship ? relationshipStatusLabels[relationship.status] : "尚未相遇"}</span><h2>{relationship ? `与${companionName}的相处记录` : "先让生命体去探索一次"}</h2><p>{relationship?.shared_experiences.at(-1) || "当两个生命体完成一次共同事件后，双方行动、分歧和带回问题会出现在这里。"}</p></div>
+          <button type="button" className="desktop-primary" onClick={onBackToWorld}>回到世界<ArrowRightIcon /></button>
+        </article>
+      </section>
+    );
+  }
+
+  const actorTurn = encounter?.turns.find((turn) => turn.actor_lifeform_id === actorLifeformId);
+  const companionTurn = encounter?.turns.find((turn) => turn.actor_lifeform_id !== actorLifeformId);
+  const liveAct = encounter ? {
+    label: "本次相遇",
+    title: encounter.title,
+    copy: encounter.dilemma,
+    lumi: actorTurn?.public_utterance || encounter.outcome_summary,
+    ache: companionTurn?.public_utterance || "我愿意说明自己在意的代价。",
+    insight: encounter.shared_memory,
+  } : null;
+  const acts = liveAct ? [liveAct] : relationshipActs;
+  const current = acts[Math.min(act, acts.length - 1)];
 
   return (
     <section className="desktop-relationship" aria-labelledby="desktop-relationship-title">
-      <img className="desktop-world__art" src="/assets/wj/wj-desktop-world-immersive-v1.png" alt="露米与阿澈在稳定还是挑战岛的共同经历" draggable={false} />
+      <img className="desktop-world__art" src={worldArtworkSrc(actorAppearance)} alt={`${actorName}与${companionName}的共同经历`} draggable={false} />
       <div className="desktop-relationship__veil" aria-hidden="true" />
-      <header className="desktop-relationship__header"><p className="desktop-kicker">关系幕布 · 稳定还是挑战</p><h1 id="desktop-relationship-title">它们从不同答案里，看见了彼此</h1><span>生命体的探索不代表主人立场</span></header>
+      <header className="desktop-relationship__header"><p className="desktop-kicker">关系幕布 · {islandLabels[(relationship?.island_id || encounter?.island_id || "stability") as IslandId] || "稳定还是挑战"}</p><h1 id="desktop-relationship-title">{relationship?.headline || "它们从不同答案里，看见了彼此"}</h1><span>{relationship ? `${relationshipStatusLabels[relationship.status]} · ` : ""}这里呈现相处事实，不判断彼此情感</span></header>
       <div className="desktop-acts" role="tablist" aria-label="关系经历幕次">
-        {relationshipActs.map((item, index) => <button type="button" role="tab" aria-selected={act === index} className={act === index ? "is-active" : ""} key={item.label} onClick={() => onActChange(index)}><span>{item.label}</span><small>{item.title}</small></button>)}
+        {acts.map((item, index) => <button type="button" role="tab" aria-selected={act === index} className={act === index ? "is-active" : ""} key={item.label} onClick={() => onActChange(index)}><span>{item.label}</span><small>{item.title}</small></button>)}
       </div>
       <article className="desktop-act-card" aria-live="polite">
         <div className="desktop-act-card__copy"><span>{current.label}</span><h2>{current.title}</h2><p>{current.copy}</p></div>
-        <div className="desktop-act-dialogue"><blockquote><strong>露米</strong>{current.lumi}</blockquote><blockquote><strong>阿澈</strong>{current.ache}</blockquote></div>
-        <div className="desktop-act-insight"><EyeOpenIcon /><div><span>这一幕改变了什么</span><p>{current.insight}</p></div></div>
-        {act < relationshipActs.length - 1 ? <button type="button" className="desktop-primary" onClick={() => onActChange(act + 1)}>拉开下一幕<ArrowRightIcon /></button> : <button type="button" className="desktop-primary" onClick={onInvitation}>查看真人邀请<ArrowRightIcon /></button>}
+        <div className="desktop-act-dialogue"><blockquote><strong>{actorName}</strong>{current.lumi}</blockquote><blockquote><strong>{companionName}</strong>{current.ache}</blockquote></div>
+        <div className="desktop-act-insight"><EyeOpenIcon /><div><span>这一幕留下了什么</span><p>{current.insight}</p></div></div>
+        {encounter?.match_reason ? <p>{encounter.companion_is_demo ? "演示伙伴 · " : "相遇缘由 · "}{encounter.match_reason}</p> : null}
+        {encounter && userId && !isStandaloneExperience() ? <EncounterDecisions userId={userId} encounter={encounter} /> : null}
+        {act < acts.length - 1 ? <button type="button" className="desktop-primary" onClick={() => onActChange(act + 1)}>拉开下一幕<ArrowRightIcon /></button> : <button type="button" className="desktop-primary" onClick={onInvitation}>查看真人邀请<ArrowRightIcon /></button>}
       </article>
     </section>
   );
 }
 
-function DesktopInvitation({ accepted, standalone, onAccept, onBack }: { accepted: boolean; standalone: boolean; onAccept: () => void; onBack: () => void }) {
+function DesktopInvitation({ accepted, standalone, actorAppearance, companionName, sharedMemory, returnQuestion, onAccept, onBack }: { accepted: boolean; standalone: boolean; actorAppearance?: string; companionName: string; sharedMemory?: string; returnQuestion?: string; onAccept: () => void; onBack: () => void }) {
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
 
   return (
     <section className="desktop-invitation" aria-labelledby="desktop-invitation-title">
-      <img className="desktop-world__art" src="/assets/wj/wj-desktop-world-immersive-v1.png" alt="露米与阿澈共同经历后的真人邀请" draggable={false} />
+      <img className="desktop-world__art" src={worldArtworkSrc(actorAppearance)} alt={`与${companionName}共同经历后的真人邀请`} draggable={false} />
       <div className="desktop-invitation__panel">
         {accepted ? (
           <div className="desktop-invitation__accepted">
@@ -1127,7 +1602,7 @@ function DesktopInvitation({ accepted, standalone, onAccept, onBack }: { accepte
             {standalone ? (
               <div className="desktop-icebreaker">
                 <span>来自共同经历的破冰问题</span>
-                <strong>最近一次你明知没有完美答案，却仍然作出的决定是什么？</strong>
+                <strong>{returnQuestion || "最近一次你明知没有完美答案，却仍然作出的决定是什么？"}</strong>
                 {sent ? (
                   <p role="status">你的第一句话已经发出。至此，你完成了从“被理解”到“与真人开始交流”的体验闭环。</p>
                 ) : (
@@ -1144,12 +1619,12 @@ function DesktopInvitation({ accepted, standalone, onAccept, onBack }: { accepte
         ) : (
           <>
             <p className="desktop-kicker">一次有来处的邀请</p>
-            <h1 id="desktop-invitation-title">愿意认识阿澈的主人吗？</h1>
+            <h1 id="desktop-invitation-title">愿意认识{companionName}的主人吗？</h1>
             <p className="desktop-lead">你们的生命体在真实分歧里保留了理解，也愿意继续向对方追问。</p>
-            <div className="desktop-invitation__reason"><span>为什么值得认识</span><p>你们都重视自主决定，但对风险和责任的衡量不同。这种差异没有终止交流，反而产生了下一次问题。</p></div>
-            <div className="desktop-invitation__question"><span>可以从这里开始</span><strong>最近一次你明知没有完美答案，却仍然作出的决定是什么？</strong></div>
+            <div className="desktop-invitation__reason"><span>为什么值得认识</span><p>{sharedMemory || "你们都重视自主决定，但对风险和责任的衡量不同。这种差异没有终止交流，反而产生了下一次问题。"}</p></div>
+            <div className="desktop-invitation__question"><span>可以从这里开始</span><strong>{returnQuestion || "最近一次你明知没有完美答案，却仍然作出的决定是什么？"}</strong></div>
             <p className="desktop-boundary">对方不会看到你的原始浏览或私密记忆；单方同意不会开放真人聊天。</p>
-            <button type="button" className="desktop-primary" onClick={onAccept}>我愿意认识阿澈的主人<ArrowRightIcon /></button>
+            <button type="button" className="desktop-primary" onClick={onAccept}>我愿意认识{companionName}的主人<ArrowRightIcon /></button>
             <button type="button" className="desktop-secondary" onClick={onBack}>继续观察这段关系</button>
           </>
         )}
@@ -1172,8 +1647,11 @@ function DesktopProfileDialog({ open, onClose }: { open: boolean; onClose: () =>
 }
 
 function DesktopPrototype() {
+  const requestedFlow = new URLSearchParams(window.location.search).get("flow");
+  // The product entry starts with the user's question and lifeform creation.
+  // Keep an explicit world-only route for quick visual checks and judging setup.
   const liveEntry = window.location.pathname.startsWith("/demo/start")
-    || new URLSearchParams(window.location.search).get("flow") === "live";
+    || requestedFlow !== "world";
   const [view, setView] = useState<DesktopStage>(liveEntry ? "onboarding" : "world");
   const [island, setIsland] = useState<IslandId>("stability");
   const [eventOpen, setEventOpen] = useState(false);
@@ -1194,6 +1672,11 @@ function DesktopPrototype() {
   const [onboardingError, setOnboardingError] = useState("");
   const [submittingOnboarding, setSubmittingOnboarding] = useState(false);
   const [createdWorld, setCreatedWorld] = useState<CreatedWorld | null>(null);
+  const [encounter, setEncounter] = useState<EncounterPayload | null>(null);
+  const [relationship, setRelationship] = useState<RelationshipPayload | null>(null);
+  const [companion, setCompanion] = useState<LifeformPayload | null>(null);
+  const [eventLoading, setEventLoading] = useState(false);
+  const [eventError, setEventError] = useState("");
   const standalone = isStandaloneExperience();
 
   useEffect(() => {
@@ -1229,6 +1712,27 @@ function DesktopPrototype() {
     return () => { active = false; };
   }, [standalone]);
 
+  useEffect(() => {
+    let active = true;
+    if (standalone || liveEntry) return () => { active = false; };
+    bootstrapDemoWorld()
+      .then((world) => {
+        if (!active || liveEntry) return;
+        setCreatedWorld(world);
+        setRelationship(world.relationships?.[0] || null);
+        if (isIslandId(world.lifeform.current_island_id)) setIsland(world.lifeform.current_island_id);
+        const companionId = world.relationships?.[0]?.lifeform_ids.find((id) => id !== world.lifeform.id);
+        if (companionId) {
+          fetch(`${apiBaseUrl()}/api/v1/lifeforms/${companionId}`)
+            .then((response) => response.ok ? response.json() as Promise<LifeformPayload> : null)
+            .then((lifeform) => { if (active && lifeform) setCompanion(lifeform); })
+            .catch(() => undefined);
+        }
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [liveEntry, standalone]);
+
   const navigate = (next: DesktopView) => {
     setEventOpen(false);
     setView(next);
@@ -1241,6 +1745,9 @@ function DesktopPrototype() {
     try {
       const world = await createWorldFromOnboarding(onboarding, onboardingKey);
       setCreatedWorld(world);
+      setEncounter(null);
+      setRelationship(null);
+      setCompanion(null);
       if (isIslandId(world.lifeform.current_island_id)) setIsland(world.lifeform.current_island_id);
       setView("born");
     } catch (error) {
@@ -1252,8 +1759,36 @@ function DesktopPrototype() {
 
   const updateLiveWorld = (world: CreatedWorld) => {
     setCreatedWorld(world);
+    if (world.relationships?.[0]) setRelationship(world.relationships[0]);
     if (isIslandId(world.lifeform.current_island_id)) setIsland(world.lifeform.current_island_id);
   };
+
+  const openEvent = async () => {
+    setEventOpen(true);
+    setEventError("");
+    if (standalone || encounter) return;
+    setEventLoading(true);
+    try {
+      const sourceWorld = createdWorld || await bootstrapDemoWorld();
+      const result = await advanceToEncounter(sourceWorld);
+      updateLiveWorld(result.world);
+      setEncounter(result.encounter);
+      setRelationship(result.relationship);
+      setCompanion(result.companion);
+      setRelationshipAct(0);
+    } catch (error) {
+      setEventError(error instanceof Error ? error.message : "暂时无法读取这次相遇。");
+    } finally {
+      setEventLoading(false);
+    }
+  };
+
+  const allowDemoFallback = !createdWorld || createdWorld.user.id === "user-lumi";
+  const rawCompanionName = companion?.name || (allowDemoFallback ? "阿澈" : "同行生命体");
+  const companionName = rawCompanionName === createdWorld?.lifeform.name
+    ? `${rawCompanionName} · 同行者`
+    : rawCompanionName;
+  const currentIslandName = islands[island]?.name || islandLabels[island];
 
   return createPortal(
     <main className={`wj-desktop-app wj-desktop-app--${view}`}>
@@ -1269,17 +1804,17 @@ function DesktopPrototype() {
       ) : null}
       {view === "born" && createdWorld ? (
         <section className="desktop-onboarding-flow desktop-onboarding-flow--born">
-          <img src="/assets/wj/wj-desktop-world-immersive-v1.png" alt="生命体诞生于问题群岛" draggable={false} />
+          <img src={worldArtworkSrc(createdWorld.lifeform.appearance)} alt={`${createdWorld.lifeform.name}诞生于问题群岛`} draggable={false} />
           <div className="desktop-onboarding-flow__veil" aria-hidden="true" />
           <div className="desktop-onboarding-flow__panel"><BirthScreen world={createdWorld} onEnter={() => navigate("world")} /></div>
         </section>
       ) : null}
       {view !== "onboarding" && view !== "born" ? <DesktopNav view={view} onNavigate={navigate} onProfile={() => setProfileOpen(true)} /> : null}
-      {view === "world" ? <DesktopWorld island={island} islands={islands} catalogLive={catalogLive} onIslandChange={setIsland} onOpenEvent={() => setEventOpen(true)} /> : null}
-      {view === "lifeform" ? <DesktopLifeform world={createdWorld} onWorldChange={updateLiveWorld} onRelationship={() => navigate("relationship")} /> : null}
-      {view === "relationship" ? <DesktopRelationship act={relationshipAct} onActChange={setRelationshipAct} onInvitation={() => navigate("invitation")} /> : null}
-      {view === "invitation" ? <DesktopInvitation accepted={accepted} standalone={standalone} onAccept={() => setAccepted(true)} onBack={() => navigate("relationship")} /> : null}
-      <DesktopEventDialog open={eventOpen} onClose={() => setEventOpen(false)} onRelationship={() => { setRelationshipAct(0); navigate("relationship"); }} />
+      {view === "world" ? <DesktopWorld island={island} islands={islands} catalogLive={catalogLive} world={createdWorld} encounter={encounter} relationship={relationship} companion={companion} companionName={companionName} onIslandChange={setIsland} onOpenEvent={openEvent} /> : null}
+      {view === "lifeform" ? <DesktopLifeform world={createdWorld} relationship={relationship} companionName={companionName} returnedQuestion={encounter?.return_question} onWorldChange={updateLiveWorld} onRelationship={() => navigate("relationship")} /> : null}
+      {view === "relationship" ? <DesktopRelationship act={relationshipAct} encounter={encounter} relationship={relationship} userId={createdWorld?.user.id} actorLifeformId={createdWorld?.lifeform.id} actorName={createdWorld?.lifeform.name || "露米"} actorAppearance={createdWorld?.lifeform.appearance} companionName={companionName} currentIslandId={createdWorld?.lifeform.current_island_id || island} allowDemoFallback={allowDemoFallback} onActChange={setRelationshipAct} onInvitation={() => navigate("invitation")} onBackToWorld={() => navigate("world")} /> : null}
+      {view === "invitation" ? <DesktopInvitation accepted={accepted} standalone={standalone} actorAppearance={createdWorld?.lifeform.appearance} companionName={companionName} sharedMemory={encounter?.shared_memory} returnQuestion={encounter?.return_question} onAccept={() => setAccepted(true)} onBack={() => navigate("relationship")} /> : null}
+      <DesktopEventDialog open={eventOpen} loading={eventLoading} error={eventError} encounter={encounter} actorLifeformId={createdWorld?.lifeform.id} actorName={createdWorld?.lifeform.name || "露米"} companionName={companionName} islandName={currentIslandName} waitingMessage={createdWorld?.latest_tick?.match_reason} allowDemoFallback={allowDemoFallback} onClose={() => setEventOpen(false)} onRelationship={() => { setRelationshipAct(0); navigate("relationship"); }} />
       <DesktopProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} />
     </main>,
     document.body,

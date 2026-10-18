@@ -80,6 +80,52 @@ STANCE_ELIGIBLE_SOURCES: frozenset[EvidenceSource] = frozenset(
     }
 )
 
+# 各来源的证据权重（PRD 8.4）。
+#
+# 权重表放在领域层而不是 `app/zhihu/schemas.py`：导入适配层的模块文档明确
+# 写着「不做记忆判断」，而权重就是记忆判断——它决定一条候选理解能否成立。
+# 适配层的 `SIGNAL_WEIGHT` 现在反向委托到这里，与 `STANCE_ELIGIBLE` 同一套
+# 防漂移做法。
+#
+# 数值的含义是「这条行为多大程度上说明用户真的在意」：
+# - 本人创作是用户花时间写下的东西，最强；
+# - 收藏夹自命名是用户亲手起的名字，说明他在主动组织自己的关注；
+# - 单条收藏可能只是顺手，关注某人更可能只是想看他的内容；
+# - 应用内浏览停留最弱，单独永远不足以形成候选。
+# 校准高于主动输入：校准是用户对着一条具体理解说「很像我」或「理解错了」，
+# 比自由输入更明确地指向某个议题。
+EVIDENCE_WEIGHT: dict[EvidenceSource, int] = {
+    # A 类：平台导入。四个数值与 PRD 8.4 的阶梯一致，改动会直接影响
+    # `app.domain.promotion.CANDIDATE_WEIGHT_FLOOR` 的语义。
+    EvidenceSource.AUTHORED_CONTENT: 100,
+    EvidenceSource.FAVLIST_NAMING: 80,
+    EvidenceSource.FAVORITE_ITEM: 40,
+    EvidenceSource.FOLLOWEE_HEADLINE: 20,
+    # B 类：应用内行为。
+    EvidenceSource.CALIBRATION: 120,
+    EvidenceSource.IN_APP_INPUT: 100,
+    EvidenceSource.RETURNED_QUESTION_REPLY: 60,
+    EvidenceSource.IN_APP_BROWSE: 10,
+}
+
+# 新增来源却忘记赋权时，`dict.get(source, 0)` 会让它安静地变成零权重证据：
+# 证据落库了，却永远推不动任何理解，而且没有任何报错。宁可在导入模块时
+# 就失败。
+_UNWEIGHTED = tuple(
+    sorted(s.value for s in EvidenceSource if s not in EVIDENCE_WEIGHT)
+)
+if _UNWEIGHTED:  # pragma: no cover - 配置错误在导入时即暴露
+    raise RuntimeError(
+        f"EVIDENCE_WEIGHT 缺少来源 {', '.join(_UNWEIGHTED)}；"
+        "新增 EvidenceSource 时必须同时给出权重。"
+    )
+
+
+def weight_of(source: EvidenceSource | str) -> int:
+    """来源对应的证据权重。未知来源直接报错，不静默降级为 0。"""
+    return EVIDENCE_WEIGHT[coerce_source(source)]
+
+
 # 平台 Summary 派生立场的置信度上限。
 # Summary 是平台摘要而非用户逐字原话，只能开启低或中置信度候选。
 MAX_PLATFORM_STANCE_CONFIDENCE = 0.7

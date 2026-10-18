@@ -1,6 +1,6 @@
 {
   "fixture_version": "v2",
-  "fetched_on": "2026-09-15",
+  "fetched_on": "2026-10-15",
   "generator": "backend/fixtures/build_islands.py",
   "notes": [
     "观点材料为平台返回的 Summary，不是 AI 生成摘要，也不是回答全文。",

@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import hashlib
 import json
 import re
@@ -169,7 +168,10 @@ def build_materials(answers_payload: dict, *, island_id: str) -> tuple[list[dict
 
 
 def main() -> None:
-    fetched_on = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    # Rebuilding pinned source snapshots is not a new platform fetch. Preserve
+    # published provenance, otherwise a later day's test changes fixture hashes.
+    fetched_on = (json.loads(OUT.read_text(encoding="utf-8-sig"))["fetched_on"]
+                  if OUT.exists() else "2026-09-15")
     islands: list[dict] = []
     report: list[str] = []
 

@@ -852,6 +852,11 @@ body.wj-desktop-mode .phone-stage {
 .desktop-creature-label--lumi { top: 34%; left: 28%; }
 .desktop-creature-label--ache { top: 41%; left: 61%; }
 
+.desktop-world--intimacy .desktop-world__art { filter: hue-rotate(318deg) saturate(0.92) brightness(0.96); }
+.desktop-world--ai_loneliness .desktop-world__art { filter: hue-rotate(44deg) saturate(1.08) brightness(0.9); }
+.desktop-world--appearance-dawn .desktop-creature-label--lumi { border-left-color: #ffd89b; color: #fff0d2; }
+.desktop-world--appearance-gold .desktop-creature-label--lumi { border-left-color: #ffd05d; color: #fff2b1; }
+
 .desktop-world__story {
   position: absolute;
   z-index: 8;
@@ -1089,10 +1094,30 @@ body.wj-desktop-mode .phone-stage {
 
 .desktop-event-dialog__turns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 18px;
   margin: 28px 0 20px;
 }
+
+.desktop-event-dialog__notice {
+  display: grid;
+  gap: 6px;
+  margin: 22px 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(64, 118, 105, 0.2);
+  background: #edf3ee;
+  color: #526a66;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.desktop-event-dialog__notice--error {
+  border-color: rgba(169, 102, 39, 0.24);
+  background: #f8efe3;
+  color: #895b2e;
+}
+
+.desktop-event-dialog__notice small { color: inherit; opacity: 0.76; }
 
 .desktop-event-dialog__turns article {
   display: grid;
@@ -1138,6 +1163,18 @@ body.wj-desktop-mode .phone-stage {
 .desktop-event-dialog__result p,
 .desktop-act-insight p { margin-top: 5px; color: #526a66; font-size: 14px; line-height: 1.55; }
 
+.desktop-event-dialog__return {
+  display: grid;
+  gap: 8px;
+  margin: -4px 0 24px;
+  padding: 16px 18px;
+  border-left: 2px solid #d9a45f;
+  background: #f8f1e7;
+}
+
+.desktop-event-dialog__return span { color: #a96627; font-size: 12px; letter-spacing: 0.08em; }
+.desktop-event-dialog__return strong { color: #263955; font-family: "Songti SC", STSong, serif; font-size: 16px; font-weight: 500; line-height: 1.6; }
+
 .desktop-lifeform {
   position: absolute;
   inset: 0;
@@ -1168,6 +1205,8 @@ body.wj-desktop-mode .phone-stage {
   object-fit: cover;
   object-position: center 48%;
 }
+
+.desktop-lifeform__portrait-image { transition: filter 240ms ease; }
 
 .desktop-lifeform__identity {
   position: absolute;
@@ -1544,3 +1583,10 @@ body.wj-desktop-mode .phone-stage {
   .desktop-onboarding-flow__panel { left: 18%; padding-inline: 34px; }
   .desktop-onboarding-flow__panel .onboarding-question { min-height: 190px; }
 }
+.understanding-manager { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(180,190,208,.25); }
+.understanding-manager h3 { font-size: 18px; margin: 18px 0 12px; }
+.understanding-manager .memory-card { margin: 12px 0; }
+.understanding-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.understanding-manager button { padding: 8px 12px; margin: 4px; border-radius: 12px; border: 1px solid rgba(150,164,190,.4); background: rgba(235,231,220,.1); color: inherit; cursor: pointer; }
+.understanding-manager button:disabled { opacity: .45; cursor: default; }
+.understanding-detail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }

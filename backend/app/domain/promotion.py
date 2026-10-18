@@ -43,7 +43,7 @@ from .evidence_policy import (
     coerce_source,
 )
 from .island_policy import topic_code_for
-from .models import StrictModel
+from .models import OnboardingTopic, StrictModel
 from .onboarding import TOPIC_ISLANDS, TOPIC_LABELS, topic_for_text
 
 # 一条候选理解所需的最低证据权重。

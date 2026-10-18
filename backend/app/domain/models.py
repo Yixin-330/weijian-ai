@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .evidence_policy import EvidenceSource, MemoryStatus, MemoryType
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -40,21 +42,84 @@ class SocialPace(StrEnum):
     OPEN_TO_CONNECTION = "open_to_connection"
 
 
+class ExplorationSettings(StrictModel):
+    enabled: bool = True
+    allow_cross_island: bool = False
+    allow_demo_partners: bool = False
+    social_pace: SocialPace = SocialPace.SHARED_EXPERIENCES
+    excluded_topics: tuple[OnboardingTopic, ...] = ()
+
+
+class ExplorationState(StrictModel):
+    lifeform_id: str
+    user_id: str
+    island_id: str
+    enabled: bool
+    allow_cross_island: bool = False
+    allow_demo_partners: bool = False
+    is_demo: bool = False
+    social_pace: SocialPace = SocialPace.SHARED_EXPERIENCES
+    excluded_topics: tuple[str, ...] = ()
+    availability: Literal["available", "busy"] = "available"
+    waiting_since: datetime = Field(default_factory=utc_now)
+    available_at: datetime = Field(default_factory=utc_now)
+    latest_social_snapshot_id: str | None = None
+
+
+class EncounterDecisionRequest(StrictModel):
+    user_id: str = Field(min_length=1, max_length=64)
+    decision: Literal["observe_again", "invite", "distance", "end", "block"]
+
+
 class TriggerType(StrEnum):
     CRON = "cron"
     MANUAL = "manual"
     FIXTURE = "fixture"
 
 
-class RelationshipStage(StrEnum):
-    UNMET = "unmet"
-    NOTICED = "noticed"
-    SHARED_EXPERIENCE = "shared_experience"
-    CARED = "cared"
-    CONNECTION_CANDIDATE = "connection_candidate"
-    STALLED = "stalled"
-    DISTANT = "distant"
+class EncounterStatus(StrEnum):
+    """Technical lifecycle only; it never describes how the pair feels."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    INVALID = "invalid"
+    LEFT = "left"
+    FAILED = "failed"
+    DISCARDED = "discarded"
+
+
+class RelationshipStatus(StrEnum):
+    """Whether a pair may keep exploring, not an inferred intimacy level."""
+
+    ACTIVE = "active"
     ENDED = "ended"
+    BLOCKED = "blocked"
+
+
+class UserDecisionKind(StrEnum):
+    OBSERVE_AGAIN = "observe_again"
+    INVITE = "invite"
+    DISTANCE = "distance"
+    END = "end"
+    BLOCK = "block"
+
+
+class ConnectionStatus(StrEnum):
+    WAITING = "waiting"
+    MUTUAL_ACCEPTED = "mutual_accepted"
+    ACTIVE = "active"
+    ENDED = "ended"
+
+
+class MessageStatus(StrEnum):
+    SENT = "sent"
+    DELETED = "deleted"
+
+
+class ContextPurpose(StrEnum):
+    EXPLORATION = "exploration"
+    SOCIAL_RECOMMENDATION = "social_recommendation"
 
 
 class EncounterAction(StrEnum):
@@ -70,6 +135,66 @@ class CalibrationRequest(StrictModel):
     user_id: str = Field(min_length=1, max_length=64)
     decision: CalibrationDecision
     allow_social_recommendation: bool = True
+
+
+class UnderstandingChange(StrictModel):
+    user_id: str
+    operation: Literal["edit", "delete", "permission"]
+    expected_version: int = Field(ge=1)
+    statement: str | None = Field(default=None, min_length=1, max_length=1000)
+    allow_social_recommendation: bool = False
+
+
+class ConsentChange(StrictModel):
+    memory_inference: bool
+    social_recommendation: bool
+
+
+class EvidenceIngestRequest(StrictModel):
+    """A source fact entering the append-only growth-evidence log."""
+
+    ingestion_key: str = Field(min_length=1, max_length=128)
+    source: EvidenceSource
+    content_text: str = Field(min_length=1, max_length=10000)
+    source_ref: str | None = Field(default=None, max_length=500)
+    topic_code: str = Field(default="unclassified", min_length=1, max_length=64)
+    self_reference: bool = False
+    assertion_mode: str | None = Field(default=None, max_length=24)
+    polarity: str | None = Field(default=None, max_length=24)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    is_sensitive: bool = False
+    allow_social_recommendation: bool = False
+    snapshot_id: str | None = Field(default=None, max_length=36)
+    source_occurred_at: datetime | None = None
+
+    @field_validator("content_text")
+    @classmethod
+    def normalize_content_text(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("content_text must contain visible characters")
+        return normalized
+
+
+class EvidenceRecord(StrictModel):
+    id: str
+    user_id: str
+    ingestion_key: str
+    source: EvidenceSource
+    content_text: str
+    source_ref: str | None
+    topic_code: str
+    authored_by_user: bool
+    self_reference: bool
+    assertion_mode: str | None
+    polarity: str | None
+    confidence: float = Field(ge=0, le=1)
+    consent_version: int = Field(ge=1)
+    is_sensitive: bool
+    allow_social_recommendation: bool
+    snapshot_id: str | None
+    source_occurred_at: datetime | None
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class OnboardingRequest(StrictModel):
@@ -120,23 +245,60 @@ class Lifeform(StrictModel):
 class Memory(StrictModel):
     id: str
     lifeform_id: str
-    kind: Literal["topic", "stance", "preference", "boundary", "social_intent"]
+    kind: MemoryType
     statement: str
-    status: Literal["candidate", "confirmed", "rejected"]
+    status: MemoryStatus
     confidence: float = Field(ge=0, le=1)
     evidence_ids: tuple[str, ...]
     allow_social_recommendation: bool
+    version: int = Field(default=1, ge=1)
+    supersedes_id: str | None = None
+    topic_code: str = "unclassified"
+    score: float = Field(default=1.0, ge=0)
+    score_updated_at: datetime = Field(default_factory=utc_now)
+    expires_at: datetime | None = None
     calibration: CalibrationDecision | None = None
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class AgentContextSnapshot(StrictModel):
+    id: str
+    user_id: str
+    lifeform_id: str
+    purpose: ContextPurpose
+    consent_version: int = Field(ge=1)
+    understanding_version: int = Field(ge=0)
+    understanding_ids: tuple[str, ...]
+    topics: tuple[str, ...]
+    stances: tuple[str, ...]
+    preferences: tuple[str, ...]
+    boundaries: tuple[str, ...]
+    social_intents: tuple[str, ...]
+    topic_weights: dict[str, float] = Field(default_factory=dict)
+    long_term_topic_weights: dict[str, float] = Field(default_factory=dict)
+    calibration: CalibrationDecision | None = None
+    rule_version: str = "memory.v1"
+    content_hash: str = ""
+    excluded_understanding_ids: tuple[str, ...] = ()
+    evidence_cutoff_at: datetime
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Relationship(StrictModel):
+    """A factual pair-exploration read model used by the relationship curtain.
+
+    The user-facing page keeps the familiar name ``Relationship``. ``status``
+    only controls whether future encounters are allowed; observations must come
+    from encounter events and never from an inferred emotional stage.
+    """
+
     id: str
     lifeform_ids: tuple[str, str]
-    stage: RelationshipStage
+    status: RelationshipStatus
     island_id: str
     headline: str
     shared_experiences: tuple[str, ...]
+    encounter_count: int = Field(ge=0)
     source_mode: Literal["precomputed", "live", "fallback"]
 
 
@@ -158,17 +320,45 @@ class Encounter(StrictModel):
     title: str
     dilemma: str
     lifeform_ids: tuple[str, str]
-    status: Literal["completed", "left"]
+    status: EncounterStatus
     turns: tuple[EncounterTurn, ...]
     outcome_summary: str
     relationship_id: str
-    relationship_before: RelationshipStage
-    relationship_after: RelationshipStage
     shared_memory: str
     return_question: str
     source_mode: Literal["fixture"] = "fixture"
+    match_reason: str = ""
+    actor_snapshot_id: str | None = None
+    companion_snapshot_id: str | None = None
+    companion_is_demo: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     completed_at: datetime = Field(default_factory=utc_now)
+
+
+class UserDecision(StrictModel):
+    id: str
+    encounter_id: str
+    user_id: str
+    decision: UserDecisionKind
+    decided_at: datetime = Field(default_factory=utc_now)
+
+
+class Connection(StrictModel):
+    id: str
+    relationship_id: str
+    status: ConnectionStatus
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Message(StrictModel):
+    id: str
+    channel_id: str
+    sender_user_id: str
+    content: str = Field(min_length=1, max_length=4000)
+    status: MessageStatus = MessageStatus.SENT
+    created_at: datetime = Field(default_factory=utc_now)
+    deleted_at: datetime | None = None
 
 
 class AuditRecord(StrictModel):
@@ -191,6 +381,10 @@ class WorldTick(StrictModel):
     # 记录本次决策使用的 fixture 版本，使 tick 可回溯到当时的岛屿快照。
     # 数据库 world_ticks.fixture_version 列一直存在，此前没有模型字段承载。
     fixture_version: str | None = None
+    context_snapshot_id: str | None = None
+    matching_status: Literal["waiting", "matched", "paused", "cooldown", "failed"] = "waiting"
+    match_reason: str = ""
+    encounter_id: str | None = None
     # 数据库为 VARCHAR(500)；在模型层同样约束，避免超长理由到写库才失败。
     decision_reason: str = Field(max_length=500)
     status: Literal["completed"] = "completed"

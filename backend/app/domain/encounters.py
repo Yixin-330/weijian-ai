@@ -14,9 +14,9 @@ from app.islands import Island
 from .models import (
     Encounter,
     EncounterAction,
+    EncounterStatus,
     EncounterTurn,
     Lifeform,
-    RelationshipStage,
 )
 
 
@@ -42,15 +42,6 @@ def relationship_id_for_pair(lifeform_a_id: str, lifeform_b_id: str) -> str:
     return uuid5(NAMESPACE_URL, f"weijian:relationship:{first}:{second}").hex
 
 
-def advance_relationship(stage: RelationshipStage) -> RelationshipStage:
-    return {
-        RelationshipStage.UNMET: RelationshipStage.SHARED_EXPERIENCE,
-        RelationshipStage.NOTICED: RelationshipStage.SHARED_EXPERIENCE,
-        RelationshipStage.SHARED_EXPERIENCE: RelationshipStage.CARED,
-        RelationshipStage.CARED: RelationshipStage.CONNECTION_CANDIDATE,
-    }.get(stage, stage)
-
-
 def build_fixture_encounter(
     *,
     tick_id: str,
@@ -60,7 +51,6 @@ def build_fixture_encounter(
     companion: Lifeform,
     previous_event_count: int,
     relationship_id: str,
-    relationship_before: RelationshipStage,
     occurred_at: datetime,
 ) -> Encounter:
     if not island.design_ready or not island.events:
@@ -110,7 +100,6 @@ def build_fixture_encounter(
         )
         for number, item in enumerate(usable[:turn_count], start=1)
     )
-    after = advance_relationship(relationship_before)
     shared_memory = _SHARED_MEMORY[island.island_id]
     return Encounter(
         id=encounter_id,
@@ -121,12 +110,10 @@ def build_fixture_encounter(
         title=event["title"],
         dilemma=event["dilemma"],
         lifeform_ids=(actor.id, companion.id),
-        status="completed",
+        status=EncounterStatus.COMPLETED,
         turns=turns,
         outcome_summary=f"它们完成了「{event['title']}」，答案不同，但愿意继续理解彼此。",
         relationship_id=relationship_id,
-        relationship_before=relationship_before,
-        relationship_after=after,
         shared_memory=shared_memory,
         return_question=event["return_question"],
         created_at=occurred_at,

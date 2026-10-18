@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from uuid import uuid4
 
-from sqlalchemy import Engine, and_, func, insert, or_, select, update
+from sqlalchemy import Engine, and_, case, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.core.observability import current_trace_id
 from app.islands import get_islands
 from app.domain.encounters import build_fixture_encounter, relationship_id_for_pair
 from app.domain.errors import Conflict, Forbidden, NotFound
+from app.domain.evidence_ingestion import (
+    build_evidence_record,
+    same_idempotent_fact,
+)
 from app.domain.evidence_policy import (
     EvidenceSource,
     MemoryType,
@@ -34,11 +39,13 @@ from app.domain.models import (
     Encounter,
     EncounterAction,
     EncounterTurn,
+    EvidenceIngestRequest,
+    EvidenceRecord,
     Lifeform,
     Memory,
     OnboardingRequest,
     Relationship,
-    RelationshipStage,
+    RelationshipStatus,
     TriggerType,
     UserState,
     WorldReadModel,
@@ -46,7 +53,6 @@ from app.domain.models import (
     utc_now,
 )
 from app.domain.understanding import (
-    calibration_effect,
     effective_direction_decision,
     explain_next_action,
     next_action,
@@ -67,7 +73,14 @@ from .schema import (
     user_consents,
     users,
     world_ticks,
+    platform_import_snapshots,
 )
+from .memory import SqlMemoryService
+from app.domain.memory_service import snapshot_for
+from app.domain.models import ContextPurpose
+from app.domain.match_service import MatchingService, choose_match, finish_match
+from .matching import SqlMatchingRepository, acquire_matching_guard
+from .matching_schema import exploration_states
 
 
 DEMO_COMPANION_USER_ID = "user-ache"
@@ -81,7 +94,7 @@ def _utc(value: datetime | None) -> datetime:
     return resolved
 
 
-class MySqlExperienceModule:
+class MySqlExperienceModule(SqlMemoryService, MatchingService):
     """Persistent adapter for the Experience interface.
 
     All multi-row writes are committed in one database transaction. MySQL is
@@ -90,6 +103,12 @@ class MySqlExperienceModule:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+
+    @contextmanager
+    def _matching_session(self):
+        with self._engine.begin() as connection:
+            acquire_matching_guard(self, connection)
+            yield SqlMatchingRepository(self, connection)
 
     def check_ready(self) -> bool:
         try:
@@ -106,8 +125,10 @@ class MySqlExperienceModule:
             return tuple(
                 connection.execute(
                     select(users.c.id)
-                    .select_from(users.join(lifeforms, users.c.id == lifeforms.c.user_id))
+                    .select_from(users.join(lifeforms, users.c.id == lifeforms.c.user_id)
+                        .join(exploration_states, exploration_states.c.lifeform_id == lifeforms.c.id))
                     .where(users.c.social_intent.in_(("exploring", "open")))
+                    .where(exploration_states.c.enabled.is_(True))
                     .order_by(users.c.id)
                     .limit(limit)
                 ).scalars().all()
@@ -207,10 +228,16 @@ class MySqlExperienceModule:
                     evidence,
                     evidence.c.id == evidence_id,
                     id=evidence_id,
+                    ingestion_key=f"fixture:{evidence_id}",
                     user_id=DEMO_USER_ID,
                     snapshot_id=None,
                     source_type=source_type,
                     source_ref=None,
+                    content_text=(
+                        "我反复思考稳定与冒险之间的选择"
+                        if source is EvidenceSource.AUTHORED_CONTENT
+                        else "稳定、选择与新的可能"
+                    ),
                     topic_code="choice_uncertainty",
                     authored_by_user=authored,
                     self_reference=True,
@@ -240,6 +267,9 @@ class MySqlExperienceModule:
                 score=1.0,
                 score_updated_at=now,
                 allow_social_recommendation=True,
+                version=1,
+                supersedes_memory_id=None,
+                topic_code="choice_uncertainty",
                 created_at=now,
                 updated_at=now,
                 expires_at=None,
@@ -266,16 +296,20 @@ class MySqlExperienceModule:
                 id=DEMO_RELATIONSHIP_ID,
                 lifeform_a_id=first_lifeform,
                 lifeform_b_id=second_lifeform,
-                current_stage=RelationshipStage.SHARED_EXPERIENCE.value,
+                status=RelationshipStatus.ACTIVE.value,
                 last_island_id=seed_island.island_id,
                 headline="它们从不同答案里，看见了彼此",
                 shared_experiences=["灯塔即将熄灭", "关于稳定与选择权的第一次碰撞"],
+                encounter_count=1,
                 source_mode="precomputed",
                 projection_version=1,
                 ended_at=None,
                 created_at=now,
                 updated_at=now,
             )
+            repo = SqlMatchingRepository(self, connection)
+            repo.get_state(DEMO_USER_ID)
+            repo.get_state(DEMO_COMPANION_USER_ID)
         return self.get_world(DEMO_USER_ID)
 
     def onboard(
@@ -339,6 +373,24 @@ class MySqlExperienceModule:
                     )
                 )
 
+                SqlMatchingRepository(self, connection).get_state(ids.user_id)
+                question_evidence = build_evidence_record(
+                    user_id=ids.user_id,
+                    consent_version=1,
+                    request=EvidenceIngestRequest(
+                        ingestion_key=f"onboarding:{ids.question_evidence_id}",
+                        source=EvidenceSource.IN_APP_INPUT,
+                        content_text=request.current_question,
+                        source_ref="onboarding:current_question",
+                        topic_code=projection.primary_topic.value,
+                        self_reference=True,
+                        assertion_mode="question",
+                        confidence=0.82,
+                        allow_social_recommendation=request.allow_social_recommendation,
+                    ),
+                    evidence_id=ids.question_evidence_id,
+                    created_at=now,
+                )
                 validate_memory_evidence(
                     memory_type=MemoryType.TOPIC,
                     sources=(EvidenceSource.IN_APP_INPUT,),
@@ -346,24 +398,7 @@ class MySqlExperienceModule:
                     confidence=0.82,
                 )
                 connection.execute(
-                    insert(evidence).values(
-                        id=ids.question_evidence_id,
-                        user_id=ids.user_id,
-                        snapshot_id=None,
-                        source_type=EvidenceSource.IN_APP_INPUT.value,
-                        source_ref="onboarding:current_question",
-                        topic_code=projection.primary_topic.value,
-                        authored_by_user=True,
-                        self_reference=True,
-                        assertion_mode="question",
-                        polarity=None,
-                        confidence=0.82,
-                        consent_version=1,
-                        is_sensitive=False,
-                        allow_social_recommendation=request.allow_social_recommendation,
-                        source_occurred_at=now,
-                        created_at=now,
-                    )
+                    insert(evidence).values(**self._evidence_values(question_evidence))
                 )
                 connection.execute(
                     insert(memories).values(
@@ -377,6 +412,9 @@ class MySqlExperienceModule:
                         score=0.82,
                         score_updated_at=now,
                         allow_social_recommendation=request.allow_social_recommendation,
+                        version=1,
+                        supersedes_memory_id=None,
+                        topic_code=projection.primary_topic.value,
                         created_at=now,
                         updated_at=now,
                         expires_at=None,
@@ -393,6 +431,23 @@ class MySqlExperienceModule:
                 for index, topic in enumerate(request.long_term_topics):
                     evidence_id = ids.topic_evidence_ids[index]
                     memory_id = ids.topic_memory_ids[index]
+                    topic_evidence = build_evidence_record(
+                        user_id=ids.user_id,
+                        consent_version=1,
+                        request=EvidenceIngestRequest(
+                            ingestion_key=f"onboarding:{evidence_id}",
+                            source=EvidenceSource.IN_APP_INPUT,
+                            content_text=TOPIC_LABELS[topic],
+                            source_ref=f"onboarding:topic:{topic.value}",
+                            topic_code=topic.value,
+                            self_reference=True,
+                            assertion_mode="selection",
+                            confidence=1.0,
+                            allow_social_recommendation=request.allow_social_recommendation,
+                        ),
+                        evidence_id=evidence_id,
+                        created_at=now,
+                    )
                     validate_memory_evidence(
                         memory_type=MemoryType.TOPIC,
                         sources=(EvidenceSource.IN_APP_INPUT,),
@@ -400,24 +455,7 @@ class MySqlExperienceModule:
                         confidence=1.0,
                     )
                     connection.execute(
-                        insert(evidence).values(
-                            id=evidence_id,
-                            user_id=ids.user_id,
-                            snapshot_id=None,
-                            source_type=EvidenceSource.IN_APP_INPUT.value,
-                            source_ref=f"onboarding:topic:{topic.value}",
-                            topic_code=topic.value,
-                            authored_by_user=True,
-                            self_reference=True,
-                            assertion_mode="selection",
-                            polarity=None,
-                            confidence=1.0,
-                            consent_version=1,
-                            is_sensitive=False,
-                            allow_social_recommendation=request.allow_social_recommendation,
-                            source_occurred_at=now,
-                            created_at=now,
-                        )
+                        insert(evidence).values(**self._evidence_values(topic_evidence))
                     )
                     connection.execute(
                         insert(memories).values(
@@ -431,6 +469,9 @@ class MySqlExperienceModule:
                             score=0.78,
                             score_updated_at=now,
                             allow_social_recommendation=request.allow_social_recommendation,
+                            version=1,
+                            supersedes_memory_id=None,
+                            topic_code=topic.value,
                             created_at=now,
                             updated_at=now,
                             expires_at=None,
@@ -563,64 +604,97 @@ class MySqlExperienceModule:
                 raise NotFound(f"world tick {tick_id!r} was not found")
             return self._tick_from_row(row)
 
-    def calibrate_memory(self, memory_id: str, request: CalibrationRequest) -> Memory:
+    def ingest_evidence(
+        self, user_id: str, request: EvidenceIngestRequest
+    ) -> EvidenceRecord:
         now = utc_now()
-        with self._engine.begin() as connection:
-            memory_row = connection.execute(
-                select(memories).where(memories.c.id == memory_id).with_for_update()
-            ).mappings().first()
-            if memory_row is None:
-                raise NotFound(f"memory {memory_id!r} was not found")
-            lifeform_row = connection.execute(
-                select(lifeforms).where(lifeforms.c.id == memory_row["lifeform_id"])
-            ).mappings().one()
-            if lifeform_row["user_id"] != request.user_id:
-                raise NotFound(f"memory {memory_id!r} was not found")
+        candidate: EvidenceRecord | None = None
+        try:
+            with self._engine.begin() as connection:
+                user_row = connection.execute(
+                    select(users).where(users.c.id == user_id).with_for_update()
+                ).mappings().first()
+                if user_row is None:
+                    raise NotFound(f"user {user_id!r} was not found")
 
-            effect = calibration_effect(request.decision)
-            next_status = effect.status
-            connection.execute(
-                update(memories)
-                .where(memories.c.id == memory_id)
-                .values(
-                    status=next_status,
-                    allow_social_recommendation=request.allow_social_recommendation,
-                    updated_at=now,
+                candidate = build_evidence_record(
+                    user_id=user_id,
+                    consent_version=int(user_row["consent_version"]),
+                    request=request,
+                    created_at=now,
                 )
-            )
-            connection.execute(
-                insert(memory_revisions).values(
-                    id=uuid4().hex,
-                    memory_id=memory_id,
-                    user_id=request.user_id,
-                    decision=request.decision.value,
-                    previous_status=memory_row["status"],
-                    next_status=next_status,
-                    allow_social_recommendation=request.allow_social_recommendation,
+                existing_row = connection.execute(
+                    select(evidence).where(
+                        evidence.c.user_id == user_id,
+                        evidence.c.ingestion_key == request.ingestion_key,
+                    )
+                ).mappings().first()
+                if existing_row is not None:
+                    existing = self._evidence_from_row(existing_row)
+                    if not same_idempotent_fact(existing, candidate):
+                        raise Conflict(
+                            "ingestion key was already used for different evidence"
+                        )
+                    return existing
+
+                if candidate.snapshot_id is not None:
+                    source_snapshot = connection.execute(select(platform_import_snapshots.c.id)
+                        .where(platform_import_snapshots.c.id == candidate.snapshot_id,
+                               platform_import_snapshots.c.user_id == user_id,
+                               platform_import_snapshots.c.status == "active")).first()
+                    if source_snapshot is None:
+                        raise NotFound("active source snapshot not found")
+                connection.execute(
+                    insert(evidence).values(**self._evidence_values(candidate))
+                )
+                self._write_audit(
+                    connection,
+                    event_type="evidence.ingested",
+                    actor_id=user_id,
+                    subject_id=candidate.id,
+                    details={
+                        "source": candidate.source.value,
+                        "topic_code": candidate.topic_code,
+                        "consent_version": candidate.consent_version,
+                        "allow_social_recommendation": (
+                            candidate.allow_social_recommendation
+                        ),
+                    },
                     occurred_at=now,
                 )
-            )
-            connection.execute(
-                update(lifeforms)
-                .where(lifeforms.c.id == lifeform_row["id"])
-                .values(
-                    current_focus=effect.focus,
-                    version=lifeforms.c.version + 1,
-                    updated_at=now,
+                return candidate
+        except IntegrityError:
+            # Two workers may race after both observe no row. The unique key is
+            # the final arbiter; the loser returns the committed immutable fact.
+            if candidate is not None:
+                with self._engine.connect() as connection:
+                    row = connection.execute(
+                        select(evidence).where(
+                            evidence.c.user_id == user_id,
+                            evidence.c.ingestion_key == request.ingestion_key,
+                        )
+                    ).mappings().first()
+                if row is not None:
+                    existing = self._evidence_from_row(row)
+                    if same_idempotent_fact(existing, candidate):
+                        return existing
+                    raise Conflict(
+                        "ingestion key was already used for different evidence"
+                    )
+            raise
+
+    def get_evidence(self, evidence_id: str, *, user_id: str) -> EvidenceRecord:
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(evidence).where(
+                    evidence.c.id == evidence_id,
+                    evidence.c.user_id == user_id,
                 )
-            )
-            self._write_audit(
-                connection,
-                event_type="memory.calibrated",
-                actor_id=request.user_id,
-                subject_id=memory_id,
-                details={
-                    "decision": request.decision.value,
-                    "allow_social_recommendation": request.allow_social_recommendation,
-                },
-                occurred_at=now,
-            )
-        return self._get_memory(memory_id)
+            ).mappings().first()
+            if row is None:
+                raise NotFound(f"evidence {evidence_id!r} was not found")
+            return self._evidence_from_row(row)
+
 
     def run_world_tick(
         self,
@@ -634,6 +708,7 @@ class MySqlExperienceModule:
         now = utc_now()
         try:
             with self._engine.begin() as connection:
+                acquire_matching_guard(self, connection)
                 existing = connection.execute(
                     select(world_ticks).where(
                         world_ticks.c.user_id == user_id,
@@ -648,65 +723,6 @@ class MySqlExperienceModule:
                 ).mappings().first()
                 if lifeform_row is None:
                     raise NotFound(f"user {user_id!r} was not found")
-                latest_revision = connection.execute(
-                    select(
-                        memory_revisions.c.decision,
-                        memory_revisions.c.memory_id,
-                    )
-                    .select_from(
-                        memory_revisions.join(
-                            memories,
-                            memory_revisions.c.memory_id == memories.c.id,
-                        )
-                    )
-                    .where(memories.c.lifeform_id == lifeform_row["id"])
-                    .order_by(memory_revisions.c.occurred_at.desc())
-                    .limit(1)
-                ).first()
-                # 与内存 Adapter 共用同一个决策源，两处不再各自硬编码岛屿 ID。
-                # 数据库存的是 decision 字符串，这里转回枚举再交给策略函数。
-                raw_calibration = (
-                    CalibrationDecision(latest_revision.decision)
-                    if latest_revision
-                    else None
-                )
-                calibration = effective_direction_decision(raw_calibration)
-                recent_rows = connection.execute(
-                    select(evidence.c.topic_code, func.max(evidence.c.confidence))
-                    .where(
-                        evidence.c.user_id == user_id,
-                        evidence.c.allow_social_recommendation.is_(True),
-                        evidence.c.is_sensitive.is_(False),
-                    )
-                    .group_by(evidence.c.topic_code)
-                ).all()
-                recent_topic_weights = {
-                    topic_code: min(float(weight), 1.0)
-                    for topic_code, weight in recent_rows
-                }
-                long_term_rows = connection.execute(
-                    select(evidence.c.topic_code, func.max(memories.c.score))
-                    .select_from(
-                        memories.join(
-                            memory_evidence,
-                            memory_evidence.c.memory_id == memories.c.id,
-                        ).join(
-                            evidence,
-                            evidence.c.id == memory_evidence.c.evidence_id,
-                        )
-                    )
-                    .where(
-                        memories.c.lifeform_id == lifeform_row["id"],
-                        memories.c.status.in_(("candidate", "confirmed")),
-                        memories.c.allow_social_recommendation.is_(True),
-                        evidence.c.is_sensitive.is_(False),
-                    )
-                    .group_by(evidence.c.topic_code)
-                ).all()
-                long_term_topic_weights = {
-                    topic_code: min(float(weight), 1.0)
-                    for topic_code, weight in long_term_rows
-                }
                 repeat_rows = connection.execute(
                     select(world_ticks.c.selected_island_id, func.count())
                     .where(
@@ -732,6 +748,13 @@ class MySqlExperienceModule:
                     "温和追问": 0.72,
                     "主动尝试": 0.78,
                 }.get(lifeform_row["exploration_tendency"], 0.55)
+                unit = self._read_memory_unit(connection, user_id)
+                snapshot = self._save_snapshot_in(connection,
+                    snapshot_for(unit, ContextPurpose.EXPLORATION))
+                raw_calibration = snapshot.calibration
+                calibration = effective_direction_decision(raw_calibration)
+                recent_topic_weights = snapshot.topic_weights
+                long_term_topic_weights = snapshot.long_term_topic_weights
                 choice = select_island(
                     context=materialized_decision_context(
                         calibration=calibration,
@@ -748,6 +771,8 @@ class MySqlExperienceModule:
                     decision=raw_calibration,
                     island_reason=choice.reason,
                 )
+                if snapshot.excluded_understanding_ids:
+                    reason = "已停止使用不再有效或未获授权的理解；" + reason
 
                 tick_id = uuid4().hex
                 trace_id = current_trace_id()
@@ -759,6 +784,7 @@ class MySqlExperienceModule:
                         trigger_type=trigger_type.value,
                         idempotency_key=idempotency_key,
                         fixture_version=choice.fixture_version,
+                        context_snapshot_id=snapshot.id,
                         selected_island_id=island_id,
                         decision_reason=reason,
                         source_mode="live",
@@ -788,13 +814,14 @@ class MySqlExperienceModule:
                         "selected_island_id": island_id,
                         "next_action": action,
                         "calibrated_understanding_id": (
-                            latest_revision.memory_id if latest_revision else ""
+                            snapshot.understanding_ids[-1] if snapshot.understanding_ids else ""
                         ),
                         "understanding_affects_direction": calibration is not None,
+                        "context_snapshot_id": snapshot.id,
                     },
                     occurred_at=now,
                 )
-                self._run_fixture_encounter(
+                result = self._run_fixture_encounter(
                     connection,
                     tick_id=tick_id,
                     fixture_version=choice.fixture_version,
@@ -803,7 +830,10 @@ class MySqlExperienceModule:
                     actor_user_id=user_id,
                     occurred_at=now,
                     trace_id=trace_id,
+                    seed=f"{user_id}:{idempotency_key}",
                 )
+                connection.execute(update(world_ticks).where(world_ticks.c.id == tick_id)
+                    .values(match_payload=result))
             return self.get_tick(tick_id)
         except IntegrityError:
             with self._engine.connect() as connection:
@@ -828,29 +858,24 @@ class MySqlExperienceModule:
         actor_user_id: str,
         occurred_at: datetime,
         trace_id: str,
-    ) -> None:
+        seed: str,
+    ) -> dict:
         island = get_islands(fixture_version).by_id(island_id)
         if not island.design_ready:
-            return
+            return {"status": "waiting", "reason": "这座岛的共同事件尚未开放，生命体会继续探索。"}
+        repo = SqlMatchingRepository(self, connection)
+        result, selected = choose_match(repo, user_id=actor_user_id, island=island,
+            seed=seed, now=occurred_at)
+        repo.audit("matching.decided", actor_user_id, tick_id,
+            {"status": result["status"], "candidate_count": len(result["candidates"]),
+             "rule_version": result["rule_version"]})
+        if selected is None:
+            return result
         actor_user = connection.execute(
             select(users).where(users.c.id == actor_user_id)
         ).mappings().one()
-        if actor_user["social_intent"] == "disabled":
-            return
-
-        companion_row = connection.execute(
-            select(lifeforms)
-            .select_from(lifeforms.join(users, users.c.id == lifeforms.c.user_id))
-            .where(
-                lifeforms.c.id != actor_row["id"],
-                lifeforms.c.current_island_id == island_id,
-                users.c.social_intent.in_(("exploring", "open")),
-            )
-            .order_by(lifeforms.c.id)
-            .limit(1)
-        ).mappings().first()
-        if companion_row is None:
-            return
+        companion_row = connection.execute(select(lifeforms).where(
+            lifeforms.c.id == selected.lifeform_id)).mappings().one()
         companion_user = connection.execute(
             select(users).where(users.c.id == companion_row["user_id"])
         ).mappings().one()
@@ -887,11 +912,6 @@ class MySqlExperienceModule:
             companion=self._lifeform_from_row(companion_row),
             previous_event_count=int(previous_event_count),
             relationship_id=relationship_id,
-            relationship_before=(
-                RelationshipStage(relationship_row["current_stage"])
-                if relationship_row
-                else RelationshipStage.UNMET
-            ),
             occurred_at=occurred_at,
         )
 
@@ -914,6 +934,8 @@ class MySqlExperienceModule:
                 trace_id=trace_id,
                 created_at=occurred_at,
                 completed_at=occurred_at,
+                match_payload={k: result[k] for k in ("reason", "actor_snapshot_id",
+                    "companion_snapshot_id", "companion_is_demo")},
             )
         )
         common_payload = {
@@ -921,8 +943,6 @@ class MySqlExperienceModule:
             "title": encounter.title,
             "dilemma": encounter.dilemma,
             "relationship_id": encounter.relationship_id,
-            "relationship_before": encounter.relationship_before.value,
-            "relationship_after": encounter.relationship_after.value,
             "shared_memory": encounter.shared_memory,
             "return_question": encounter.return_question,
             "source_mode": encounter.source_mode,
@@ -960,10 +980,11 @@ class MySqlExperienceModule:
                 update(relationships)
                 .where(relationships.c.id == relationship_id)
                 .values(
-                    current_stage=encounter.relationship_after.value,
+                    status=RelationshipStatus.ACTIVE.value,
                     last_island_id=island_id,
                     headline=headline,
                     shared_experiences=[*previous_experiences, encounter.shared_memory],
+                    encounter_count=relationships.c.encounter_count + 1,
                     source_mode="live",
                     projection_version=relationships.c.projection_version + 1,
                     updated_at=occurred_at,
@@ -975,10 +996,11 @@ class MySqlExperienceModule:
                     id=relationship_id,
                     lifeform_a_id=first_id,
                     lifeform_b_id=second_id,
-                    current_stage=encounter.relationship_after.value,
+                    status=RelationshipStatus.ACTIVE.value,
                     last_island_id=island_id,
                     headline=headline,
                     shared_experiences=[encounter.shared_memory],
+                    encounter_count=1,
                     source_mode="live",
                     projection_version=1,
                     ended_at=None,
@@ -991,9 +1013,13 @@ class MySqlExperienceModule:
                 id=uuid4().hex,
                 relationship_id=relationship_id,
                 event_type="encounter_completed",
-                previous_stage=encounter.relationship_before.value,
-                proposed_stage=encounter.relationship_after.value,
-                committed_stage=encounter.relationship_after.value,
+                previous_status=(
+                    relationship_row["status"]
+                    if relationship_row
+                    else RelationshipStatus.ACTIVE.value
+                ),
+                proposed_status=None,
+                committed_status=RelationshipStatus.ACTIVE.value,
                 encounter_id=encounter.id,
                 actor_user_id=actor_user_id,
                 dimensions_delta={"curiosity": 1, "respect": 1},
@@ -1018,6 +1044,7 @@ class MySqlExperienceModule:
             update(lifeforms)
             .where(lifeforms.c.id == companion_row["id"])
             .values(
+                current_island_id=island_id,
                 status=f"刚刚完成「{encounter.title}」",
                 version=lifeforms.c.version + 1,
                 updated_at=occurred_at,
@@ -1032,11 +1059,12 @@ class MySqlExperienceModule:
                 "event_id": encounter.event_id,
                 "turn_count": len(encounter.turns),
                 "relationship_id": relationship_id,
-                "previous_stage": encounter.relationship_before.value,
-                "committed_stage": encounter.relationship_after.value,
+                "relationship_status": RelationshipStatus.ACTIVE.value,
             },
             occurred_at=occurred_at,
         )
+        finish_match(repo, (actor_user_id, selected.user_id), island_id, occurred_at)
+        return {**result, "encounter_id": encounter.id}
 
     @property
     def audit_count(self) -> int:
@@ -1054,6 +1082,17 @@ class MySqlExperienceModule:
 
     @staticmethod
     def _insert_if_missing(connection, table, predicate, **values) -> None:
+        # Demo bootstrap may be requested twice at once (for example by React
+        # StrictMode).  A read-then-insert check is not atomic, so both
+        # transactions can observe a missing row and race on the primary key.
+        # Use each supported database's conflict-safe insert for this seed path.
+        dialect = connection.dialect.name
+        if dialect == "mysql":
+            connection.execute(insert(table).prefix_with("IGNORE").values(**values))
+            return
+        if dialect == "sqlite":
+            connection.execute(insert(table).prefix_with("OR IGNORE").values(**values))
+            return
         primary_key = next(iter(table.primary_key.columns))
         if connection.execute(select(primary_key).where(predicate)).first() is None:
             connection.execute(insert(table).values(**values))
@@ -1109,10 +1148,11 @@ class MySqlExperienceModule:
         return Relationship(
             id=row["id"],
             lifeform_ids=(row["lifeform_a_id"], row["lifeform_b_id"]),
-            stage=RelationshipStage(row["current_stage"]),
+            status=RelationshipStatus(row["status"]),
             island_id=row["last_island_id"],
             headline=row["headline"],
             shared_experiences=tuple(row["shared_experiences"] or ()),
+            encounter_count=int(row["encounter_count"]),
             source_mode=row["source_mode"],
         )
 
@@ -1146,11 +1186,13 @@ class MySqlExperienceModule:
             turns=turns,
             outcome_summary=row["outcome_summary"] or "",
             relationship_id=payload["relationship_id"],
-            relationship_before=RelationshipStage(payload["relationship_before"]),
-            relationship_after=RelationshipStage(payload["relationship_after"]),
             shared_memory=payload["shared_memory"],
             return_question=payload["return_question"],
             source_mode="fixture",
+            match_reason=(row["match_payload"] or {}).get("reason", ""),
+            actor_snapshot_id=(row["match_payload"] or {}).get("actor_snapshot_id"),
+            companion_snapshot_id=(row["match_payload"] or {}).get("companion_snapshot_id"),
+            companion_is_demo=(row["match_payload"] or {}).get("companion_is_demo", False),
             created_at=_utc(row["created_at"]),
             completed_at=_utc(row["completed_at"]),
         )
@@ -1166,6 +1208,7 @@ class MySqlExperienceModule:
         decision = connection.execute(
             select(memory_revisions.c.decision)
             .where(memory_revisions.c.memory_id == row["id"])
+            .where(memory_revisions.c.decision.in_(tuple(d.value for d in CalibrationDecision)))
             .order_by(memory_revisions.c.occurred_at.desc())
             .limit(1)
         ).scalar_one_or_none()
@@ -1178,8 +1221,64 @@ class MySqlExperienceModule:
             confidence=float(row["confidence"]),
             evidence_ids=evidence_ids,
             allow_social_recommendation=bool(row["allow_social_recommendation"]),
-            calibration=CalibrationDecision(decision) if decision else None,
+            version=int(row["version"]),
+            supersedes_id=row["supersedes_memory_id"],
+            calibration=CalibrationDecision(decision) if decision in {d.value for d in CalibrationDecision} else None,
+            topic_code=row["topic_code"],
+            score=float(row["score"]),
+            score_updated_at=_utc(row["score_updated_at"]),
+            expires_at=_utc(row["expires_at"]) if row["expires_at"] else None,
             updated_at=_utc(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _evidence_values(record: EvidenceRecord) -> dict:
+        return {
+            "id": record.id,
+            "ingestion_key": record.ingestion_key,
+            "user_id": record.user_id,
+            "snapshot_id": record.snapshot_id,
+            "source_type": record.source.value,
+            "source_ref": record.source_ref,
+            "content_text": record.content_text,
+            "topic_code": record.topic_code,
+            "authored_by_user": record.authored_by_user,
+            "self_reference": record.self_reference,
+            "assertion_mode": record.assertion_mode,
+            "polarity": record.polarity,
+            "confidence": record.confidence,
+            "consent_version": record.consent_version,
+            "is_sensitive": record.is_sensitive,
+            "allow_social_recommendation": record.allow_social_recommendation,
+            "source_occurred_at": record.source_occurred_at,
+            "created_at": record.created_at,
+        }
+
+    @staticmethod
+    def _evidence_from_row(row) -> EvidenceRecord:
+        return EvidenceRecord(
+            id=row["id"],
+            user_id=row["user_id"],
+            ingestion_key=row["ingestion_key"],
+            source=EvidenceSource(row["source_type"]),
+            content_text=row["content_text"],
+            source_ref=row["source_ref"],
+            topic_code=row["topic_code"],
+            authored_by_user=bool(row["authored_by_user"]),
+            self_reference=bool(row["self_reference"]),
+            assertion_mode=row["assertion_mode"],
+            polarity=row["polarity"],
+            confidence=float(row["confidence"]),
+            consent_version=int(row["consent_version"]),
+            is_sensitive=bool(row["is_sensitive"]),
+            allow_social_recommendation=bool(row["allow_social_recommendation"]),
+            snapshot_id=row["snapshot_id"],
+            source_occurred_at=(
+                _utc(row["source_occurred_at"])
+                if row["source_occurred_at"] is not None
+                else None
+            ),
+            created_at=_utc(row["created_at"]),
         )
 
     @staticmethod
@@ -1192,6 +1291,10 @@ class MySqlExperienceModule:
             idempotency_key=row["idempotency_key"],
             selected_island_id=row["selected_island_id"],
             fixture_version=row["fixture_version"],
+            context_snapshot_id=row["context_snapshot_id"],
+            matching_status=(row["match_payload"] or {}).get("status", "waiting"),
+            match_reason=(row["match_payload"] or {}).get("reason", ""),
+            encounter_id=(row["match_payload"] or {}).get("encounter_id"),
             decision_reason=row["decision_reason"],
             status="completed",
             source_mode="live",

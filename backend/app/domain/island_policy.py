@@ -20,9 +20,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from app.islands import Island, IslandSet, get_islands
+from app.islands import FixtureError, Island, IslandSet, get_islands
 
-from .models import CalibrationDecision
+from .models import CalibrationDecision, OnboardingTopic
 
 # 岛屿 ID 采用当前活动 fixture 的取值（backend/fixtures/islands.v2.json）。
 # 这些稳定 ID 同时用于 fixture、数据库外键与前端读取契约。
@@ -223,5 +223,29 @@ def initial_island(islands: IslandSet | None = None) -> IslandChoice:
 
 
 def topic_code_for(island_id: str) -> str:
-    """岛屿对应的主题编码，供证据与记忆关联使用。"""
-    return get_islands().by_id(island_id).topic_code
+    """岛屿对应的主题编码，供证据与记忆关联使用。
+
+    ## 为什么要在这里校验
+
+    `evidence.topic_code` 有两条写入路径：onboarding 写 `OnboardingTopic.value`，
+    导入路径写本函数的返回值。两者目前**取值完全相同**，因此
+    `idx_evidence_user_topic` 上的聚合能把"用户自己选的议题"和"平台行为推出的
+    议题"算到一起。
+
+    但这个相同是 fixture 里的一列文本维持的：`app.islands._parse_island` 只检查
+    `topic_code` 非空，谁改一个字母都不会报错，聚合会安静地分裂成两个命名空间
+    ——证据还在，理解却再也长不出来，且没有任何地方报错。所以在编码离开岛屿
+    目录、即将写进证据行之前，把它收敛回领域词表。
+
+    校验放在此处而不是模块导入时：导入时校验会强制加载 fixture，
+    而 fixture 缺失目前是 `FixtureError` → HTTP 503 的正常降级路径。
+    """
+    topic_code = get_islands().by_id(island_id).topic_code
+    try:
+        return OnboardingTopic(topic_code).value
+    except ValueError as exc:
+        raise FixtureError(
+            f"{island_id}: topic_code {topic_code!r} 不在领域议题词表内"
+            f"（允许值：{', '.join(t.value for t in OnboardingTopic)}）。"
+            "证据与记忆按此编码聚合，取值漂移会让导入证据无法与 onboarding 证据合并。"
+        ) from exc

@@ -6,12 +6,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import Settings
 from app.domain import (
     CalibrationRequest,
+    EvidenceIngestRequest,
     Experience,
     OnboardingRequest,
     TickCommand,
     TriggerType,
 )
 from app.domain.island_catalog import IslandCatalog
+from app.domain.contract import build_domain_contract
+from app.domain.models import (UnderstandingChange, ConsentChange, ContextPurpose,
+    ExplorationSettings, EncounterDecisionRequest)
 from app.islands import FixtureError, IslandSet
 from app.scheduling.interface import WorldScheduler
 
@@ -76,6 +80,16 @@ def build_router(
                 detail=str(exc),
             ) from exc
 
+    @router.get("/meta/domain-contract")
+    def get_domain_contract():
+        try:
+            return build_domain_contract(island_catalog.list_islands())
+        except FixtureError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
     @router.post("/demo/bootstrap")
     def bootstrap_demo():
         return module.bootstrap_demo()
@@ -93,9 +107,58 @@ def build_router(
     def get_world(user_id: str):
         return module.get_world(user_id)
 
+    @router.get("/users/{user_id}/exploration")
+    def get_exploration(user_id: str):
+        return module.get_exploration(user_id)
+
+    @router.post("/users/{user_id}/exploration")
+    def update_exploration(user_id: str, body: ExplorationSettings):
+        return module.update_exploration(user_id, body)
+
+    @router.post("/encounters/{encounter_id}/decisions")
+    def decide_encounter(encounter_id: str, body: EncounterDecisionRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128)):
+        return module.decide_encounter(encounter_id, body, idempotency_key=idempotency_key)
+
     @router.get("/lifeforms/{lifeform_id}")
     def get_lifeform(lifeform_id: str):
         return module.get_lifeform(lifeform_id)
+
+    @router.post(
+        "/users/{user_id}/evidence",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def ingest_evidence(user_id: str, body: EvidenceIngestRequest):
+        """Append one normalized source fact; retries reuse the ingestion key."""
+        return module.ingest_evidence(user_id, body)
+
+    @router.get("/users/{user_id}/evidence/{evidence_id}")
+    def get_evidence(user_id: str, evidence_id: str):
+        return module.get_evidence(evidence_id, user_id=user_id)
+
+    @router.post("/users/{user_id}/understandings/derive")
+    def derive_understandings(user_id: str):
+        return {"items": module.derive_understandings(user_id)}
+
+    @router.post("/understandings/{understanding_id}/changes")
+    def change_understanding(understanding_id: str, body: UnderstandingChange):
+        return module.change_understanding(understanding_id, body)
+
+    @router.get("/understandings/{understanding_id}/history")
+    def understanding_history(understanding_id: str, user_id: str):
+        return {"items": module.understanding_history(understanding_id, user_id=user_id)}
+
+    @router.post("/users/{user_id}/memory-consent")
+    def change_memory_consent(user_id: str, body: ConsentChange):
+        return module.change_memory_consent(user_id, body)
+
+    @router.post("/users/{user_id}/context-snapshots")
+    def create_context_snapshot(user_id: str, purpose: ContextPurpose = ContextPurpose.EXPLORATION):
+        return module.create_context_snapshot(user_id, purpose)
+
+    @router.get("/users/{user_id}/context-snapshots/{snapshot_id}")
+    def get_context_snapshot(user_id: str, snapshot_id: str):
+        return module.get_context_snapshot(snapshot_id, user_id=user_id)
 
     @router.get("/lifeforms/{lifeform_id}/understandings")
     def list_understandings(lifeform_id: str, user_id: str):

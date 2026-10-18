@@ -646,6 +646,7 @@ def test_rederive_makes_no_network_calls():
     signals = rederive(snapshots)
     kinds = {s.kind for s in signals}
     assert kinds == {SignalKind.AUTHORED_CONTENT, SignalKind.FAVLIST_NAMING}
+    assert [signal.snapshot_index for signal in signals] == [0, 1]
     # 收藏夹 token 在派生结果里仍是无损字符串
     fav = next(s for s in signals if s.kind == SignalKind.FAVLIST_NAMING)
     assert fav.source_url == f"favlist:{BIG_FAVLIST}"
@@ -672,3 +673,4 @@ def test_favorite_uses_fav_time_not_created_at():
     ]
     signal = rederive(snapshots)[0]
     assert signal.occurred_at == 1757000000
+    assert signal.snapshot_index == 0

@@ -88,6 +88,20 @@ class EvidenceSignal:
 
     这是记忆层的输入。`kind` 决定权重与是否可承载立场；
     `occurred_on` 用于判定长期记忆晋升所需的「跨 ≥2 个自然日」。
+
+    ## snapshot_index 为什么必填
+
+    `evidence.snapshot_id` 有外键指向 `platform_import_snapshots`，而快照存在
+    的全部意义是「派生推导可以从快照重跑」（PRD 8.12 / TC-IMP-003）。信号原本
+    只是紧跟在它所属快照之后被追加进 `ImportResult.signals`，配对关系只存在于
+    追加顺序里、从不被记录——落库时每条证据的 `snapshot_id` 都只能写 NULL，
+    外键与可重跑保证同时失效。
+
+    记的是**下标**而不是 `api`：`user/favlist_contents` 会产生多个 `api` 相同的
+    快照，仅凭 `api` 无法判定某条证据出自哪一个收藏夹。
+
+    没有默认值是刻意的：新增信号源时漏填会在构造处立即失败，
+    而默认值只会让证据安静地挂到错误的快照上。
     """
 
     kind: SignalKind
@@ -95,6 +109,7 @@ class EvidenceSignal:
     source_url: str
     occurred_at: int
     stance_eligible: bool
+    snapshot_index: int
 
     @property
     def occurred_on(self) -> str:
@@ -117,6 +132,15 @@ class ImportResult:
     calls_planned: tuple[str, ...] = ()
     budget_exhausted: bool = False
     partial_reason: str | None = None
+
+    def add_snapshot(self, snapshot: RawSnapshot) -> int:
+        """登记一份快照并返回其下标，供随后派生的证据引用。
+
+        追加与取下标写在一处：调用方拿不到「还没入列的下标」，
+        也无法把证据挂到上一份快照上。
+        """
+        self.snapshots.append(snapshot)
+        return len(self.snapshots) - 1
 
     @property
     def signal_kinds(self) -> set[SignalKind]:
@@ -233,7 +257,9 @@ class ZhihuImporter:
         items, _paging = await self._client.list_page(
             PATH_CONTENTS, api=api, oauth_token=token, params=params
         )
-        result.snapshots.append(RawSnapshot(api=api, path=PATH_CONTENTS, params=params, items=items))
+        index = result.add_snapshot(
+            RawSnapshot(api=api, path=PATH_CONTENTS, params=params, items=items)
+        )
         # 只取首屏，不翻页：翻页会线性消耗租户级日额度。
         for raw in items:
             item = ContentItem.parse(raw, api=api)
@@ -246,6 +272,7 @@ class ZhihuImporter:
                     source_url=item.url,
                     occurred_at=item.created_at,
                     stance_eligible=True,
+                    snapshot_index=index,
                 )
             )
 
@@ -260,7 +287,9 @@ class ZhihuImporter:
         items, _ = await self._client.list_page(
             PATH_FAVLISTS, api=api, oauth_token=token, params=params, paged=False
         )
-        result.snapshots.append(RawSnapshot(api=api, path=PATH_FAVLISTS, params=params, items=items))
+        index = result.add_snapshot(
+            RawSnapshot(api=api, path=PATH_FAVLISTS, params=params, items=items)
+        )
         for raw in items:
             fav = FavlistRecord.parse(raw, api=api)
             if not fav.evidence_text:
@@ -273,6 +302,7 @@ class ZhihuImporter:
                     # 收藏夹无创建时间，用导入时刻，跨日判定上按当天计。
                     occurred_at=int(time.time()),
                     stance_eligible=False,
+                    snapshot_index=index,
                 )
             )
 
@@ -287,10 +317,10 @@ class ZhihuImporter:
         items, _ = await self._client.list_page(
             PATH_COLLECTIONS, api=api, oauth_token=token, params=params, paged=False
         )
-        result.snapshots.append(
+        index = result.add_snapshot(
             RawSnapshot(api=api, path=PATH_COLLECTIONS, params=params, items=items)
         )
-        self._collect_favorite_items(items, api, result)
+        self._collect_favorite_items(items, api, result, index)
 
     async def _fetch_favlist_contents(
         self,
@@ -312,14 +342,24 @@ class ZhihuImporter:
             items, _paging = await self._client.list_page(
                 PATH_FAVLIST_CONTENTS, api=api, oauth_token=token, params=params
             )
-            result.snapshots.append(
+            index = result.add_snapshot(
                 RawSnapshot(api=api, path=PATH_FAVLIST_CONTENTS, params=params, items=items)
             )
-            self._collect_favorite_items(items, api, result)
+            self._collect_favorite_items(items, api, result, index)
 
     def _collect_favorite_items(
-        self, items: list[dict], api: str, result: ImportResult
+        self,
+        items: list[dict],
+        api: str,
+        result: ImportResult,
+        snapshot_index: int,
     ) -> None:
+        """收藏条目派生。
+
+        `snapshot_index` 必须由调用方传入：本方法服务于 `user/collections` 与
+        每一个下钻的 `user/favlist_contents`，自行推算下标会把后者的证据
+        全部挂到最后一份快照上。
+        """
         for raw in items:
             item = CollectionContentItem.parse(raw, api=api)
             if not item.evidence_text:
@@ -332,6 +372,7 @@ class ZhihuImporter:
                     # 用收藏时间而非内容创建时间：前者才代表用户的行为时刻。
                     occurred_at=item.fav_time or item.created_at,
                     stance_eligible=False,
+                    snapshot_index=snapshot_index,
                 )
             )
 
@@ -345,7 +386,7 @@ class ZhihuImporter:
         items, _paging = await self._client.list_page(
             PATH_FOLLOWEES, api=api, oauth_token=token, params=params
         )
-        result.snapshots.append(
+        index = result.add_snapshot(
             RawSnapshot(api=api, path=PATH_FOLLOWEES, params=params, items=items)
         )
         for raw in items:
@@ -359,6 +400,7 @@ class ZhihuImporter:
                     source_url=f"user:{followee.url_token}",
                     occurred_at=int(time.time()),
                     stance_eligible=False,
+                    snapshot_index=index,
                 )
             )
 
@@ -370,7 +412,7 @@ def rederive(snapshots: list[RawSnapshot]) -> list[EvidenceSignal]:
     而不消耗租户级日额度。
     """
     signals: list[EvidenceSignal] = []
-    for snap in snapshots:
+    for snapshot_index, snap in enumerate(snapshots):
         if snap.api == "user/contents":
             for raw in snap.items:
                 item = ContentItem.parse(raw, api=snap.api)
@@ -382,6 +424,7 @@ def rederive(snapshots: list[RawSnapshot]) -> list[EvidenceSignal]:
                             source_url=item.url,
                             occurred_at=item.created_at,
                             stance_eligible=True,
+                            snapshot_index=snapshot_index,
                         )
                     )
         elif snap.api == "user/favlists":
@@ -395,6 +438,7 @@ def rederive(snapshots: list[RawSnapshot]) -> list[EvidenceSignal]:
                             source_url=f"favlist:{fav.wire_token}",
                             occurred_at=int(snap.fetched_at),
                             stance_eligible=False,
+                            snapshot_index=snapshot_index,
                         )
                     )
         elif snap.api in ("user/collections", "user/favlist_contents"):
@@ -408,6 +452,7 @@ def rederive(snapshots: list[RawSnapshot]) -> list[EvidenceSignal]:
                             source_url=item.url,
                             occurred_at=item.fav_time or item.created_at,
                             stance_eligible=False,
+                            snapshot_index=snapshot_index,
                         )
                     )
         elif snap.api == "user/followees":
@@ -421,6 +466,7 @@ def rederive(snapshots: list[RawSnapshot]) -> list[EvidenceSignal]:
                             source_url=f"user:{followee.url_token}",
                             occurred_at=int(snap.fetched_at),
                             stance_eligible=False,
+                            snapshot_index=snapshot_index,
                         )
                     )
     return signals

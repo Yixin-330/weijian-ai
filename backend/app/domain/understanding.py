@@ -11,16 +11,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from .evidence_policy import MemoryStatus
 from .models import CalibrationDecision
 
 
-UnderstandingStatus = Literal["confirmed", "rejected"]
 LifeformAction = Literal["靠近", "观察", "回应"]
 
 
 @dataclass(frozen=True)
 class CalibrationEffect:
-    status: UnderstandingStatus
+    status: MemoryStatus
     focus: str
     next_action: LifeformAction
     explanation: str
@@ -29,28 +29,28 @@ class CalibrationEffect:
 
 _EFFECTS: dict[CalibrationDecision, CalibrationEffect] = {
     CalibrationDecision.LIKE_ME: CalibrationEffect(
-        status="confirmed",
+        status=MemoryStatus.CONFIRMED,
         focus="带着已确认的关注继续探索",
         next_action="靠近",
         explanation="用户确认了这条候选理解，生命体会带着它继续靠近相关问题",
         influences_direction=True,
     ),
     CalibrationDecision.RECENT: CalibrationEffect(
-        status="confirmed",
+        status=MemoryStatus.CONFIRMED,
         focus="把这条理解只作为近期关注",
         next_action="观察",
         explanation="用户说明这只是近期关注，生命体会继续观察但不把它固化为长期特质",
         influences_direction=True,
     ),
     CalibrationDecision.OPPOSES: CalibrationEffect(
-        status="confirmed",
+        status=MemoryStatus.CONFIRMED,
         focus="区分关注议题与赞同观点",
         next_action="回应",
         explanation="用户正在反对这个观点，生命体只保留议题关注并转向回应不同答案",
         influences_direction=True,
     ),
     CalibrationDecision.WRONG: CalibrationEffect(
-        status="rejected",
+        status=MemoryStatus.REJECTED,
         focus="重新观察，而不是替主人下结论",
         next_action="观察",
         explanation="用户否定了这条候选理解，生命体停止使用它并重新观察",

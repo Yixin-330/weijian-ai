@@ -22,7 +22,7 @@ import pytest
 
 from app.storage.schema import metadata
 
-MIGRATION = Path(__file__).resolve().parent.parent / "migrations" / "0001_core.sql"
+MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
 
 _NON_COLUMN_PREFIXES = (
     "CONSTRAINT",
@@ -35,20 +35,36 @@ _NON_COLUMN_PREFIXES = (
 
 
 def _migration_table_columns() -> dict[str, list[str]]:
-    """解析迁移 SQL，返回每张表的列名顺序。"""
-    sql = MIGRATION.read_text(encoding="utf-8")
+    """解析完整迁移链，返回升级到 head 后的列名顺序。"""
     tables: dict[str, list[str]] = {}
-    for match in re.finditer(
-        r"CREATE TABLE IF NOT EXISTS ([a-z_]+) \((.*?)\n\) ENGINE", sql, re.S
-    ):
-        name, body = match.group(1), match.group(2)
-        columns = []
-        for line in body.splitlines():
-            stripped = line.strip().rstrip(",")
-            if not stripped or stripped.startswith(_NON_COLUMN_PREFIXES):
-                continue
-            columns.append(stripped.split()[0])
-        tables[name] = columns
+    for path in sorted(MIGRATIONS.glob("*.sql")):
+        sql = path.read_text(encoding="utf-8-sig")
+        for match in re.finditer(
+            r"CREATE TABLE IF NOT EXISTS ([a-z_]+) \((.*?)\n\) ENGINE", sql, re.S
+        ):
+            name, body = match.group(1), match.group(2)
+            columns = []
+            for line in body.splitlines():
+                stripped = line.strip().rstrip(",")
+                if not stripped or stripped.startswith(_NON_COLUMN_PREFIXES):
+                    continue
+                columns.append(stripped.split()[0])
+            tables[name] = columns
+        for match in re.finditer(
+            r"ALTER TABLE ([a-z_]+)\s+RENAME COLUMN ([a-z_]+) TO ([a-z_]+)",
+            sql,
+            re.I,
+        ):
+            table_name, old_name, new_name = match.groups()
+            if table_name in tables and old_name in tables[table_name]:
+                index = tables[table_name].index(old_name)
+                tables[table_name][index] = new_name
+        for match in re.finditer(
+            r"ALTER TABLE ([a-z_]+)\s+ADD COLUMN ([a-z_]+)", sql, re.I
+        ):
+            table_name, column_name = match.groups()
+            if table_name in tables and column_name not in tables[table_name]:
+                tables[table_name].append(column_name)
     return tables
 
 
@@ -100,8 +116,34 @@ def test_import_tables_are_projected():
         assert table_name in metadata.tables
 
 
+def test_m1_memory_tables_and_context_snapshot_are_projected():
+    for table_name in (
+        "evidence",
+        "memories",
+        "memory_evidence",
+        "memory_revisions",
+        "agent_context_snapshots",
+    ):
+        assert table_name in metadata.tables
+
+    evidence_columns = metadata.tables["evidence"].columns
+    assert "ingestion_key" in evidence_columns
+    assert "content_text" in evidence_columns
+    memory_columns = metadata.tables["memories"].columns
+    assert "version" in memory_columns
+    assert "supersedes_memory_id" in memory_columns
+
+
 def test_encounter_runtime_tables_are_projected():
-    for table_name in ("encounters", "encounter_turns", "relationship_events"):
+    for table_name in (
+        "encounters",
+        "encounter_turns",
+        "relationship_events",
+        "encounter_decisions",
+        "connections",
+        "chat_channels",
+        "messages",
+    ):
         assert table_name in metadata.tables
 
 

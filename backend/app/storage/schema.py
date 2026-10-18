@@ -80,10 +80,12 @@ evidence = Table(
     "evidence",
     metadata,
     Column("id", String(36), primary_key=True),
+    Column("ingestion_key", String(128), nullable=False),
     Column("user_id", String(36), nullable=False),
     Column("snapshot_id", String(36), nullable=True),
     Column("source_type", String(40), nullable=False),
     Column("source_ref", String(500), nullable=True),
+    Column("content_text", Text, nullable=False),
     Column("topic_code", String(64), nullable=False),
     Column("authored_by_user", Boolean, nullable=False),
     Column("self_reference", Boolean, nullable=False),
@@ -95,6 +97,7 @@ evidence = Table(
     Column("allow_social_recommendation", Boolean, nullable=False),
     Column("source_occurred_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("user_id", "ingestion_key", name="uq_evidence_ingestion"),
 )
 
 memories = Table(
@@ -110,6 +113,9 @@ memories = Table(
     Column("score", Float, nullable=False),
     Column("score_updated_at", DateTime(timezone=True), nullable=False),
     Column("allow_social_recommendation", Boolean, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("supersedes_memory_id", String(36), nullable=True),
+    Column("topic_code", String(64), nullable=False, server_default="unclassified"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("expires_at", DateTime(timezone=True), nullable=True),
@@ -134,6 +140,22 @@ memory_revisions = Table(
     Column("next_status", String(16), nullable=False),
     Column("allow_social_recommendation", Boolean, nullable=False),
     Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("revision_payload", JSON, nullable=True),
+)
+
+agent_context_snapshots = Table(
+    "agent_context_snapshots",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("lifeform_id", String(36), ForeignKey("lifeforms.id"), nullable=False),
+    Column("purpose", String(32), nullable=False),
+    Column("consent_version", Integer, nullable=False),
+    Column("understanding_version", Integer, nullable=False),
+    Column("understanding_ids", JSON, nullable=False),
+    Column("context_payload", JSON, nullable=False),
+    Column("evidence_cutoff_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
 world_ticks = Table(
@@ -145,6 +167,8 @@ world_ticks = Table(
     Column("trigger_type", String(16), nullable=False),
     Column("idempotency_key", String(128), nullable=False),
     Column("fixture_version", String(32), nullable=True),
+    Column("context_snapshot_id", String(36), nullable=True),
+    Column("match_payload", JSON, nullable=True),
     Column("selected_island_id", String(64), nullable=True),
     Column("decision_reason", String(500), nullable=True),
     Column("source_mode", String(16), nullable=False),
@@ -168,6 +192,7 @@ encounters = Table(
     Column("fixture_version", String(32), nullable=False),
     Column("status", String(24), nullable=False),
     Column("outcome_summary", Text, nullable=True),
+    Column("match_payload", JSON, nullable=True),
     Column("trace_id", String(64), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("completed_at", DateTime(timezone=True), nullable=True),
@@ -194,10 +219,11 @@ relationships = Table(
     Column("id", String(36), primary_key=True),
     Column("lifeform_a_id", String(36), nullable=False),
     Column("lifeform_b_id", String(36), nullable=False),
-    Column("current_stage", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
     Column("last_island_id", String(64), nullable=False),
     Column("headline", String(255), nullable=False),
     Column("shared_experiences", JSON, nullable=False),
+    Column("encounter_count", Integer, nullable=False),
     Column("source_mode", String(16), nullable=False),
     Column("projection_version", Integer, nullable=False),
     Column("ended_at", DateTime(timezone=True), nullable=True),
@@ -212,15 +238,59 @@ relationship_events = Table(
     Column("id", String(36), primary_key=True),
     Column("relationship_id", String(36), ForeignKey("relationships.id"), nullable=False),
     Column("event_type", String(48), nullable=False),
-    Column("previous_stage", String(32), nullable=False),
-    Column("proposed_stage", String(32), nullable=True),
-    Column("committed_stage", String(32), nullable=False),
+    Column("previous_status", String(32), nullable=False),
+    Column("proposed_status", String(32), nullable=True),
+    Column("committed_status", String(32), nullable=False),
     Column("encounter_id", String(36), ForeignKey("encounters.id"), nullable=True),
     Column("actor_user_id", String(36), ForeignKey("users.id"), nullable=True),
     Column("dimensions_delta", JSON, nullable=False),
     Column("evidence_refs", JSON, nullable=False),
     Column("trace_id", String(64), nullable=False),
     Column("occurred_at", DateTime(timezone=True), nullable=False),
+)
+
+encounter_decisions = Table(
+    "encounter_decisions",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("encounter_id", String(36), ForeignKey("encounters.id"), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("decision", String(24), nullable=False),
+    Column("decided_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("encounter_id", "user_id", name="uq_encounter_decision_viewer"),
+)
+
+connections = Table(
+    "connections",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("relationship_id", String(36), ForeignKey("relationships.id"), nullable=False),
+    Column("status", String(24), nullable=False),
+    Column("recommendation_reason", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("relationship_id", name="uq_connection_relationship"),
+)
+
+chat_channels = Table(
+    "chat_channels",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("connection_id", String(36), ForeignKey("connections.id"), nullable=False),
+    Column("opened_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("connection_id", name="uq_chat_channel_connection"),
+)
+
+messages = Table(
+    "messages",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("channel_id", String(36), ForeignKey("chat_channels.id"), nullable=False),
+    Column("sender_user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("content", Text, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("deleted_at", DateTime(timezone=True), nullable=True),
 )
 
 audit_events = Table(

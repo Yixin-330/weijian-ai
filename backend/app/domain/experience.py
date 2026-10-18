@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from copy import deepcopy
 from threading import RLock
 from uuid import uuid4
 
@@ -9,37 +11,44 @@ from app.islands import get_islands
 
 from .encounters import build_fixture_encounter, relationship_id_for_pair
 from .errors import Conflict, Forbidden, NotFound
+from .evidence_ingestion import (
+    build_evidence_record,
+    same_idempotent_fact,
+)
 from .evidence_policy import (
     EvidenceSource,
     MemoryType,
     validate_memory_evidence,
 )
 from .island_policy import (
-    demo_decision_context,
     initial_island,
     materialized_decision_context,
     select_island,
-    topic_code_for,
 )
 from .models import (
+    AgentContextSnapshot,
     AuditRecord,
     CalibrationDecision,
     CalibrationRequest,
     Encounter,
+    EvidenceIngestRequest,
+    EvidenceRecord,
     Lifeform,
     Memory,
     OnboardingRequest,
     Relationship,
-    RelationshipStage,
+    RelationshipStatus,
     TriggerType,
     UserState,
     WorldReadModel,
     WorldTick,
     utc_now,
 )
+from .memory_service import MemoryService, MemoryUnit
+from .match_service import MatchingService, choose_match, finish_match
+from .matching_memory import MemoryMatchingRepository
 from .onboarding import TOPIC_LABELS, onboarding_ids, project_onboarding
 from .understanding import (
-    calibration_effect,
     effective_direction_decision,
     explain_next_action,
     next_action,
@@ -65,6 +74,11 @@ class _State:
     users: dict[str, UserState] = field(default_factory=dict)
     lifeforms: dict[str, Lifeform] = field(default_factory=dict)
     memories: dict[str, Memory] = field(default_factory=dict)
+    evidence: dict[str, EvidenceRecord] = field(default_factory=dict)
+    evidence_keys: dict[tuple[str, str], str] = field(default_factory=dict)
+    snapshots: dict[str, AgentContextSnapshot] = field(default_factory=dict)
+    memory_revisions: list[dict] = field(default_factory=list)
+    memory_consents: dict[str, tuple[bool, bool]] = field(default_factory=dict)
     relationships: dict[str, Relationship] = field(default_factory=dict)
     encounters: dict[str, Encounter] = field(default_factory=dict)
     tick_encounters: dict[str, str] = field(default_factory=dict)
@@ -73,9 +87,13 @@ class _State:
     audit: list[AuditRecord] = field(default_factory=list)
     user_topics: dict[str, tuple[str, ...]] = field(default_factory=dict)
     user_social_intent: dict[str, str] = field(default_factory=dict)
+    exploration_states: dict = field(default_factory=dict)
+    pair_exclusions: dict = field(default_factory=dict)
+    private_decisions: dict = field(default_factory=dict)
+    match_decisions: dict = field(default_factory=dict)
 
 
-class ExperienceModule:
+class ExperienceModule(MemoryService, MatchingService):
     """The small interface used by HTTP routes and future cron workers.
 
     The current implementation is deterministic and process-local. Persistence,
@@ -92,6 +110,54 @@ class ExperienceModule:
                 self._seed_demo()
             return self.get_world(DEMO_USER_ID)
 
+    @contextmanager
+    def _memory_unit(self, user_id):
+        with self._lock:
+            world = self.get_world(user_id)
+            consent = self._state.memory_consents.get(user_id, (True, True))
+            unit = MemoryUnit(user_id, world.lifeform.id, world.user.consent_version,
+                {e.id: e for e in self._state.evidence.values() if e.user_id == user_id},
+                {m.id: m for m in world.memories}, *consent)
+            previous_memories = dict(unit.memories)
+            yield unit
+            self._state.memories.update(unit.memories)
+            self._state.evidence.update(unit.evidence)
+            self._state.memory_revisions.extend(unit.revisions)
+            self._state.memory_consents[user_id] = (unit.memory_enabled, unit.social_enabled)
+            self._state.users[user_id] = world.user.model_copy(
+                update={"consent_version": unit.consent_version})
+            if unit.memories != previous_memories or unit.consent_version != world.user.consent_version:
+                self._append_audit(event_type="memory.context_changed", actor_id=user_id,
+                    subject_id=unit.lifeform_id, details={
+                        "consent_version": unit.consent_version,
+                        "memory_inference": unit.memory_enabled,
+                        "social_recommendation": unit.social_enabled,
+                        "revision_count": len(unit.revisions), "rule_version": "memory.v1"})
+
+    def _save_snapshot(self, snapshot):
+        with self._lock:
+            return self._state.snapshots.setdefault(snapshot.id, snapshot)
+
+    def _load_snapshot(self, snapshot_id, *, user_id):
+        snapshot = self._state.snapshots.get(snapshot_id)
+        if snapshot is None or snapshot.user_id != user_id:
+            raise NotFound("context snapshot not found")
+        return snapshot
+
+    def _memory_history(self, memory_id, *, user_id):
+        return tuple(r for r in self._state.memory_revisions
+                     if r["memory_id"] == memory_id and r["user_id"] == user_id)
+
+    @contextmanager
+    def _matching_session(self):
+        with self._lock:
+            backup = deepcopy(self._state)
+            try:
+                yield MemoryMatchingRepository(self)
+            except Exception:
+                self._state = backup
+                raise
+
     def onboard(
         self, request: OnboardingRequest, *, idempotency_key: str
     ) -> WorldReadModel:
@@ -106,6 +172,7 @@ class ExperienceModule:
                 return self.get_world(ids.user_id)
 
             projection = project_onboarding(request)
+            self._state.memory_consents[ids.user_id] = (True, request.allow_social_recommendation)
             self._state.users[ids.user_id] = UserState(
                 id=ids.user_id,
                 display_name="新朋友",
@@ -122,6 +189,23 @@ class ExperienceModule:
                 status="刚刚诞生，正在形成初始理解",
             )
 
+            self._ingest_evidence(
+                ids.user_id,
+                EvidenceIngestRequest(
+                    ingestion_key=f"onboarding:{ids.question_evidence_id}",
+                    source=EvidenceSource.IN_APP_INPUT,
+                    content_text=request.current_question,
+                    source_ref="onboarding:current_question",
+                    topic_code=projection.primary_topic.value,
+                    self_reference=True,
+                    assertion_mode="question",
+                    confidence=0.82,
+                    allow_social_recommendation=request.allow_social_recommendation,
+                ),
+                evidence_id=ids.question_evidence_id,
+                write_audit=False,
+            )
+
             validate_memory_evidence(
                 memory_type=MemoryType.TOPIC,
                 sources=(EvidenceSource.IN_APP_INPUT,),
@@ -136,9 +220,27 @@ class ExperienceModule:
                 status="candidate",
                 confidence=0.82,
                 evidence_ids=(ids.question_evidence_id,),
+                topic_code=projection.primary_topic.value,
+                score=0.82,
                 allow_social_recommendation=request.allow_social_recommendation,
             )
             for index, topic in enumerate(request.long_term_topics):
+                self._ingest_evidence(
+                    ids.user_id,
+                    EvidenceIngestRequest(
+                        ingestion_key=f"onboarding:{ids.topic_evidence_ids[index]}",
+                        source=EvidenceSource.IN_APP_INPUT,
+                        content_text=TOPIC_LABELS[topic],
+                        source_ref=f"onboarding:topic:{topic.value}",
+                        topic_code=topic.value,
+                        self_reference=True,
+                        assertion_mode="selection",
+                        confidence=1.0,
+                        allow_social_recommendation=request.allow_social_recommendation,
+                    ),
+                    evidence_id=ids.topic_evidence_ids[index],
+                    write_audit=False,
+                )
                 validate_memory_evidence(
                     memory_type=MemoryType.TOPIC,
                     sources=(EvidenceSource.IN_APP_INPUT,),
@@ -153,6 +255,8 @@ class ExperienceModule:
                     status="confirmed",
                     confidence=1.0,
                     evidence_ids=(ids.topic_evidence_ids[index],),
+                    topic_code=topic.value,
+                    score=0.78,
                     allow_social_recommendation=request.allow_social_recommendation,
                 )
 
@@ -165,6 +269,7 @@ class ExperienceModule:
                 )
             )
             self._state.user_social_intent[ids.user_id] = projection.social_intent
+            MemoryMatchingRepository(self).get_state(ids.user_id)
             self._append_audit(
                 event_type="onboarding.completed",
                 actor_id=ids.user_id,
@@ -184,7 +289,9 @@ class ExperienceModule:
     def list_tick_candidates(self, *, limit: int = 1000) -> tuple[str, ...]:
         if limit < 1:
             return ()
-        return tuple(self._state.users)[:limit]
+        return tuple(u for u in self._state.users
+            if self._state.user_social_intent.get(u, "disabled") != "disabled"
+            and MemoryMatchingRepository(self).get_state(u).enabled)[:limit]
 
     def close(self) -> None:
         return None
@@ -246,42 +353,60 @@ class ExperienceModule:
             raise NotFound(f"world tick {tick_id!r} was not found")
         return tick
 
-    def calibrate_memory(self, memory_id: str, request: CalibrationRequest) -> Memory:
+    def ingest_evidence(
+        self, user_id: str, request: EvidenceIngestRequest
+    ) -> EvidenceRecord:
         with self._lock:
-            return self._calibrate_memory(memory_id, request)
+            return self._ingest_evidence(user_id, request)
 
-    def _calibrate_memory(self, memory_id: str, request: CalibrationRequest) -> Memory:
-        memory = self._state.memories.get(memory_id)
-        if memory is None:
-            raise NotFound(f"memory {memory_id!r} was not found")
-        lifeform = self.get_lifeform(memory.lifeform_id)
-        if lifeform.user_id != request.user_id:
-            raise NotFound(f"memory {memory_id!r} was not found")
+    def _ingest_evidence(
+        self,
+        user_id: str,
+        request: EvidenceIngestRequest,
+        *,
+        evidence_id: str | None = None,
+        write_audit: bool = True,
+    ) -> EvidenceRecord:
+        user = self._state.users.get(user_id)
+        if user is None:
+            raise NotFound(f"user {user_id!r} was not found")
+        candidate = build_evidence_record(
+            user_id=user_id,
+            consent_version=user.consent_version,
+            request=request,
+            evidence_id=evidence_id,
+        )
+        key = (user_id, request.ingestion_key)
+        existing_id = self._state.evidence_keys.get(key)
+        if existing_id is not None:
+            existing = self._state.evidence[existing_id]
+            if not same_idempotent_fact(existing, candidate):
+                raise Conflict("ingestion key was already used for different evidence")
+            return existing
+        if candidate.snapshot_id is not None:
+            raise NotFound("platform snapshots require the persistent import adapter")
+        self._state.evidence[candidate.id] = candidate
+        self._state.evidence_keys[key] = candidate.id
+        if write_audit:
+            self._append_audit(
+                event_type="evidence.ingested",
+                actor_id=user_id,
+                subject_id=candidate.id,
+                details={
+                    "source": candidate.source.value,
+                    "topic_code": candidate.topic_code,
+                    "consent_version": candidate.consent_version,
+                    "allow_social_recommendation": candidate.allow_social_recommendation,
+                },
+            )
+        return candidate
 
-        effect = calibration_effect(request.decision)
-        updated = memory.model_copy(
-            update={
-                "status": effect.status,
-                "calibration": request.decision,
-                "allow_social_recommendation": request.allow_social_recommendation,
-                "updated_at": utc_now(),
-            }
-        )
-        self._state.memories[memory_id] = updated
+    def get_evidence(self, evidence_id: str, *, user_id: str) -> EvidenceRecord:
+        item = self._state.evidence.get(evidence_id)
+        if item is None or item.user_id != user_id:
+            raise NotFound(f"evidence {evidence_id!r} was not found")
+        return item
 
-        self._state.lifeforms[lifeform.id] = lifeform.model_copy(
-            update={"current_focus": effect.focus}
-        )
-        self._append_audit(
-            event_type="memory.calibrated",
-            actor_id=request.user_id,
-            subject_id=memory_id,
-            details={
-                "decision": request.decision.value,
-                "allow_social_recommendation": request.allow_social_recommendation,
-            },
-        )
-        return updated
 
     def run_world_tick(
         self,
@@ -291,11 +416,13 @@ class ExperienceModule:
         idempotency_key: str,
     ) -> WorldTick:
         with self._lock:
-            return self._run_world_tick(
-                user_id=user_id,
-                trigger_type=trigger_type,
-                idempotency_key=idempotency_key,
-            )
+            backup = deepcopy(self._state)
+            try:
+                return self._run_world_tick(user_id=user_id, trigger_type=trigger_type,
+                    idempotency_key=idempotency_key)
+            except Exception:
+                self._state = backup
+                raise
 
     def _run_world_tick(
         self,
@@ -311,54 +438,28 @@ class ExperienceModule:
             return self._state.ticks[existing_id]
 
         world = self.get_world(user_id)
-        calibrated_memories = tuple(
-            memory for memory in world.memories if memory.calibration is not None
-        )
-        calibrated_memory = (
-            max(calibrated_memories, key=lambda item: item.updated_at)
-            if calibrated_memories
-            else None
-        )
-        raw_calibration = calibrated_memory.calibration if calibrated_memory else None
+        snapshot = self.create_context_snapshot(user_id)
+        raw_calibration = snapshot.calibration
         calibration = effective_direction_decision(raw_calibration)
-        # Demo keeps its fixed regression context. Real onboarding users are
-        # projected from their four explicit answers without exposing raw text.
-        if user_id == DEMO_USER_ID:
-            context = demo_decision_context(calibration)
-        else:
-            topic_codes = self._state.user_topics.get(
-                user_id, (topic_code_for(world.lifeform.current_island_id),)
-            )
-            repeat_counts: dict[str, int] = {}
-            for tick in self._state.ticks.values():
-                if tick.user_id == user_id:
-                    repeat_counts[tick.selected_island_id] = (
-                        repeat_counts.get(tick.selected_island_id, 0) + 1
-                    )
-            social_willingness = {
-                "disabled": 0.0,
-                "exploring": 0.58,
-                "open": 0.82,
-            }.get(self._state.user_social_intent.get(user_id, "disabled"), 0.0)
-            curiosity = {
-                "安静观察": 0.64,
-                "温和追问": 0.72,
-                "主动尝试": 0.78,
-            }.get(world.lifeform.exploration_tendency, 0.55)
-            context = materialized_decision_context(
-                calibration=calibration,
-                recent_topic_weights={topic_codes[0]: 0.95},
-                long_term_topic_weights={code: 0.78 for code in topic_codes},
-                repeat_counts=repeat_counts,
-                curiosity=curiosity,
-                social_willingness=social_willingness,
-            )
+        repeat_counts: dict[str, int] = {}
+        for previous in self._state.ticks.values():
+            if previous.user_id == user_id:
+                repeat_counts[previous.selected_island_id] = repeat_counts.get(previous.selected_island_id, 0) + 1
+        context = materialized_decision_context(
+            calibration=calibration, recent_topic_weights=snapshot.topic_weights,
+            long_term_topic_weights=snapshot.long_term_topic_weights,
+            repeat_counts=repeat_counts, curiosity={"安静观察": 0.64,
+                "温和追问": 0.72, "主动尝试": 0.78}.get(world.lifeform.exploration_tendency, 0.55),
+            social_willingness={"disabled": 0, "exploring": 0.58, "open": 0.82}.get(
+                self._state.user_social_intent.get(user_id, "disabled"), 0))
         choice = select_island(context=context)
         action = next_action(raw_calibration)
         reason = explain_next_action(
             decision=raw_calibration,
             island_reason=choice.reason,
         )
+        if snapshot.excluded_understanding_ids:
+            reason = "已停止使用不再有效或未获授权的理解；" + reason
 
         tick = WorldTick(
             id=uuid4().hex,
@@ -368,8 +469,10 @@ class ExperienceModule:
             idempotency_key=idempotency_key,
             selected_island_id=choice.island_id,
             fixture_version=choice.fixture_version,
+            context_snapshot_id=snapshot.id,
             decision_reason=reason,
             trace_id=current_trace_id(),
+            created_at=utc_now(),
         )
         self._state.ticks[tick.id] = tick
         self._state.tick_keys[(user_id, idempotency_key)] = tick.id
@@ -389,38 +492,39 @@ class ExperienceModule:
                 "fixture_version": choice.fixture_version,
                 "next_action": action,
                 "calibrated_understanding_id": (
-                    calibrated_memory.id if calibrated_memory else ""
+                    snapshot.understanding_ids[-1] if snapshot.understanding_ids else ""
                 ),
+                "context_snapshot_id": snapshot.id,
                 "understanding_affects_direction": calibration is not None,
                 # 记录设计就绪状态：未就绪的岛不应进入双 Agent 相遇。
                 "design_ready": choice.design_ready,
             },
         )
-        self._run_fixture_encounter(tick=tick)
+        result = self._run_fixture_encounter(tick=tick)
+        self._state.match_decisions[tick.id] = result
+        tick = tick.model_copy(update={"matching_status": result["status"],
+            "match_reason": result["reason"], "encounter_id": result.get("encounter_id")})
+        self._state.ticks[tick.id] = tick
         return tick
 
-    def _run_fixture_encounter(self, *, tick: WorldTick) -> None:
+    def _run_fixture_encounter(self, *, tick: WorldTick) -> dict:
         island = get_islands(tick.fixture_version or "").by_id(tick.selected_island_id)
         if not island.design_ready:
-            return
-        if self._state.user_social_intent.get(tick.user_id, "disabled") == "disabled":
-            return
+            return {"status": "waiting", "reason": "这座岛的共同事件尚未开放，生命体会继续探索。"}
+
+        repo = MemoryMatchingRepository(self)
+        result, selected = choose_match(repo, user_id=tick.user_id, island=island,
+            seed=f"{tick.user_id}:{tick.idempotency_key}", now=tick.created_at)
+        self._append_audit(event_type="matching.decided", actor_id=tick.user_id,
+            subject_id=tick.id, details={"status": result["status"],
+                "candidate_count": len(result["candidates"]), "rule_version": result["rule_version"]})
+        if selected is None:
+            return result
 
         actor = self._state.lifeforms[tick.lifeform_id]
-        candidates = sorted(
-            (
-                lifeform
-                for lifeform in self._state.lifeforms.values()
-                if lifeform.id != actor.id
-                and lifeform.current_island_id == island.island_id
-                and self._state.user_social_intent.get(lifeform.user_id, "disabled")
-                != "disabled"
-            ),
-            key=lambda item: item.id,
-        )
-        if not candidates:
-            return
-        companion = candidates[0]
+        companion = self._state.lifeforms[selected.lifeform_id].model_copy(
+            update={"current_island_id": island.island_id})
+        self._state.lifeforms[companion.id] = companion
         pair = tuple(sorted((actor.id, companion.id)))
         relationship = next(
             (
@@ -449,18 +553,19 @@ class ExperienceModule:
             companion=companion,
             previous_event_count=previous_event_count,
             relationship_id=relationship_id,
-            relationship_before=(
-                relationship.stage if relationship else RelationshipStage.UNMET
-            ),
             occurred_at=tick.created_at,
         )
+        encounter = encounter.model_copy(update={"match_reason": result["reason"],
+            "actor_snapshot_id": result["actor_snapshot_id"],
+            "companion_snapshot_id": result["companion_snapshot_id"],
+            "companion_is_demo": result["companion_is_demo"]})
         self._state.encounters[encounter.id] = encounter
         self._state.tick_encounters[tick.id] = encounter.id
         experiences = relationship.shared_experiences if relationship else ()
         self._state.relationships[relationship_id] = Relationship(
             id=relationship_id,
             lifeform_ids=pair,
-            stage=encounter.relationship_after,
+            status=RelationshipStatus.ACTIVE,
             island_id=island.island_id,
             headline={
                 "stability": "它们从不同答案里，看见了彼此",
@@ -468,6 +573,7 @@ class ExperienceModule:
                 "ai_loneliness": "它们开始分辨被回应与被理解的不同",
             }[island.island_id],
             shared_experiences=(*experiences, encounter.shared_memory),
+            encounter_count=(relationship.encounter_count if relationship else 0) + 1,
             source_mode="live",
         )
         self._state.lifeforms[actor.id] = actor.model_copy(
@@ -484,10 +590,11 @@ class ExperienceModule:
                 "event_id": encounter.event_id,
                 "turn_count": len(encounter.turns),
                 "relationship_id": relationship_id,
-                "previous_stage": encounter.relationship_before.value,
-                "committed_stage": encounter.relationship_after.value,
+                "relationship_status": RelationshipStatus.ACTIVE.value,
             },
         )
+        finish_match(repo, (tick.user_id, selected.user_id), island.island_id, tick.created_at)
+        return {**result, "encounter_id": encounter.id}
 
     @property
     def audit_count(self) -> int:
@@ -566,14 +673,29 @@ class ExperienceModule:
             status="candidate",
             confidence=0.62,
             evidence_ids=("evidence-authored-1", "evidence-favlist-1"),
+            topic_code="choice_uncertainty",
             allow_social_recommendation=True,
         )
+        for eid, source in zip(("evidence-authored-1", "evidence-favlist-1"),
+                               DEMO_EVIDENCE_SOURCES):
+            self._state.evidence[eid] = EvidenceRecord(
+                id=eid, user_id=DEMO_USER_ID, ingestion_key=f"fixture:{eid}",
+                source=source, content_text="稳定、选择与新的可能", source_ref=None,
+                topic_code="choice_uncertainty", authored_by_user=True,
+                self_reference=True, assertion_mode="reflection", polarity=None,
+                confidence=0.7, consent_version=1, is_sensitive=False,
+                allow_social_recommendation=True, snapshot_id=None,
+                source_occurred_at=None)
         self._state.relationships[DEMO_RELATIONSHIP_ID] = Relationship(
             id=DEMO_RELATIONSHIP_ID,
             lifeform_ids=(DEMO_LIFEFORM_ID, "lifeform-ache"),
-            stage=RelationshipStage.SHARED_EXPERIENCE,
+            status=RelationshipStatus.ACTIVE,
             island_id=_seed_island.island_id,
             headline="它们从不同答案里，看见了彼此",
             shared_experiences=("灯塔即将熄灭", "关于稳定与选择权的第一次碰撞"),
+            encounter_count=1,
             source_mode="precomputed",
         )
+        repo = MemoryMatchingRepository(self)
+        repo.get_state(DEMO_USER_ID)
+        repo.get_state("user-ache")

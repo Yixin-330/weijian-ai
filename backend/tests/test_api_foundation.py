@@ -329,5 +329,6 @@ def test_precomputed_relationship_can_be_read():
     client.post("/api/v1/demo/bootstrap")
     response = client.get(f"/api/v1/relationships/{DEMO_RELATIONSHIP_ID}")
     assert response.status_code == 200
-    assert response.json()["stage"] == "shared_experience"
+    assert response.json()["status"] == "active"
+    assert response.json()["encounter_count"] == 1
     assert response.json()["source_mode"] == "precomputed"

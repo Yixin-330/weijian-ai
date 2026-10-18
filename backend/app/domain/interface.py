@@ -5,6 +5,14 @@ from typing import Protocol
 from .models import (
     CalibrationRequest,
     Encounter,
+    EvidenceIngestRequest,
+    EvidenceRecord,
+    AgentContextSnapshot,
+    ContextPurpose,
+    ConsentChange,
+    UnderstandingChange,
+    ExplorationSettings,
+    EncounterDecisionRequest,
     Lifeform,
     Memory,
     OnboardingRequest,
@@ -26,6 +34,13 @@ class Experience(Protocol):
 
     def get_world(self, user_id: str) -> WorldReadModel: ...
 
+    def get_exploration(self, user_id: str) -> dict: ...
+
+    def update_exploration(self, user_id: str, request: ExplorationSettings) -> dict: ...
+
+    def decide_encounter(self, encounter_id: str, request: EncounterDecisionRequest,
+                         *, idempotency_key: str) -> dict: ...
+
     def get_lifeform(self, lifeform_id: str) -> Lifeform: ...
 
     def get_relationship(self, relationship_id: str) -> Relationship: ...
@@ -36,7 +51,26 @@ class Experience(Protocol):
 
     def get_tick(self, tick_id: str) -> WorldTick: ...
 
+    def ingest_evidence(
+        self, user_id: str, request: EvidenceIngestRequest
+    ) -> EvidenceRecord: ...
+
+    def get_evidence(self, evidence_id: str, *, user_id: str) -> EvidenceRecord: ...
+
     def calibrate_memory(self, memory_id: str, request: CalibrationRequest) -> Memory: ...
+
+    def derive_understandings(self, user_id: str) -> tuple[Memory, ...]: ...
+
+    def change_understanding(self, memory_id: str, request: UnderstandingChange) -> Memory: ...
+
+    def change_memory_consent(self, user_id: str, request: ConsentChange) -> dict: ...
+
+    def create_context_snapshot(self, user_id: str,
+        purpose: ContextPurpose = ContextPurpose.EXPLORATION) -> AgentContextSnapshot: ...
+
+    def get_context_snapshot(self, snapshot_id: str, *, user_id: str) -> AgentContextSnapshot: ...
+
+    def understanding_history(self, memory_id: str, *, user_id: str) -> tuple[dict, ...]: ...
 
     def run_world_tick(
         self,

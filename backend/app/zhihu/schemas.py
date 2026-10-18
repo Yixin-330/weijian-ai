@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.domain.evidence_policy import is_stance_eligible as _domain_stance_eligible
+from app.domain.evidence_policy import weight_of as _domain_weight_of
 
 from .errors import ProtocolError
 from .jsonx import to_wire_id
@@ -46,12 +47,13 @@ class SignalKind(StrEnum):
     FOLLOWEE_HEADLINE = "followee_headline"  # 关注对象一句话介绍
 
 
-# PRD 8.4 权重阶梯（数值越大权重越高）。应用内信号由记忆层另行定义。
+# PRD 8.4 权重阶梯（数值越大权重越高）。
+#
+# 与下方 STANCE_ELIGIBLE 同理，数值本身定义在 `app.domain.evidence_policy`，
+# 本模块只做委托。权重决定一条候选理解能否成立，而本模块的职责声明是
+# 「不做记忆判断」；在此另存一份数值，晋升门槛就会跟着两份表各自漂移。
 SIGNAL_WEIGHT: dict[SignalKind, int] = {
-    SignalKind.AUTHORED_CONTENT: 100,
-    SignalKind.FAVLIST_NAMING: 80,
-    SignalKind.FAVORITE_ITEM: 40,
-    SignalKind.FOLLOWEE_HEADLINE: 20,
+    kind: _domain_weight_of(kind.value) for kind in SignalKind
 }
 
 # 立场（stance）来源白名单。

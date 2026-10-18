@@ -13,7 +13,7 @@ from app.domain.island_policy import ISLAND_AI_LONELINESS, ISLAND_INTIMACY
 from app.domain.island_catalog import FixtureIslandCatalog
 from app.main import create_app
 from app.storage.mysql import MySqlExperienceModule
-from app.storage.schema import evidence, metadata
+from app.storage.schema import evidence, memories, metadata
 
 
 def persistent_client(database_path: Path) -> tuple[TestClient, MySqlExperienceModule]:
@@ -138,9 +138,9 @@ def test_materialized_ai_topic_can_reach_third_island(tmp_path: Path):
     engine = create_engine(f"sqlite+pysqlite:///{database_path}")
     with engine.begin() as connection:
         connection.execute(
-            update(evidence)
-            .where(evidence.c.user_id == DEMO_USER_ID)
-            .values(topic_code="ai_and_loneliness", confidence=0.98)
+                update(memories)
+                .where(memories.c.id == DEMO_MEMORY_ID)
+                .values(topic_code="ai_and_loneliness", score=0.98)
         )
     engine.dispose()
 
@@ -175,4 +175,9 @@ def test_fixture_encounter_and_relationship_survive_restart(tmp_path: Path):
     persisted = restarted.get(f"/api/v1/encounters/{first.json()['id']}")
     assert persisted.status_code == 200
     assert persisted.json()["event_id"] == first.json()["event_id"]
-    assert persisted.json()["relationship_after"] == "cared"
+    assert "relationship_after" not in persisted.json()
+    relationship = client.get(
+        f"/api/v1/relationships/{persisted.json()['relationship_id']}"
+    )
+    assert relationship.status_code == 200
+    assert relationship.json()["status"] == "active"

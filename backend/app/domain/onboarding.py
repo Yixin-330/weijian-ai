@@ -96,11 +96,28 @@ class OnboardingIds:
     topic_memory_ids: tuple[str, ...]
 
 
-def _primary_topic(request: OnboardingRequest) -> OnboardingTopic:
-    lowered = request.current_question.casefold()
+def topic_for_text(text: str) -> OnboardingTopic | None:
+    """Classify free text into one of the three islands, or None if unclear.
+
+    Returning None matters for the import path: a platform signal that matches
+    no island still becomes an evidence row, but must not seed an understanding
+    the user cannot trace back to anything.  Onboarding cannot use None (the
+    user has already told us their long-term topics), so `_primary_topic`
+    supplies its own fallback rather than pushing one in here.
+    """
+    lowered = text.casefold()
     for topic, keywords in _QUESTION_HINTS:
         if any(keyword in lowered for keyword in keywords):
             return topic
+    return None
+
+
+def _primary_topic(request: OnboardingRequest) -> OnboardingTopic:
+    matched = topic_for_text(request.current_question)
+    if matched is not None:
+        return matched
+    # The current question said nothing recognisable; fall back to the first
+    # long-term topic the user picked explicitly.
     return request.long_term_topics[0]
 
 
