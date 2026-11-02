@@ -8,6 +8,7 @@
     "update:runtime-lock": "node scripts/update-mobile-runtime-lock.mjs",
     "test:runtime": "playwright test",
     "test:sites": "node --test tests/sites-worker.test.mjs",
+    "test:frontend": "node --experimental-vm-modules --test tests/frontend-modules.test.mjs",
     "predev": "npm run check:runtime",
     "dev": "vite --configLoader runner",
     "prebuild": "npm run check:runtime",
